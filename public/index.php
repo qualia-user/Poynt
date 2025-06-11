@@ -1,0 +1,97 @@
+<?php
+namespace App;
+
+require_once __DIR__ . '/bootstrap.php';
+
+use App\Config\ConfigApp;
+use App\Config\ConfigDatabase;
+use Doctrine\DBAL\Exception;
+use League\Container\Container;
+use Monolog\Logger;
+use Phroute\Phroute\Dispatcher;
+use App\Core\Api;
+use App\Core\RouterResolver;
+use App\Core\Response;
+use Doctrine\DBAL\DriverManager;
+use App\Services\CustomPDOHandler;
+use Ramsey\Uuid\Uuid;
+
+// Ensure CLI compatibility for testing
+if (php_sapi_name() === 'cli') {
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+    parse_str(implode('&', array_slice($argv, 1)), $_GET);
+    parse_str(implode('&', array_slice($argv, 1)), $_REQUEST);
+}
+
+// Database connection
+$options = [
+    \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+    \PDO::ATTR_EMULATE_PREPARES => false,
+    \PDO::ATTR_STRINGIFY_FETCHES => false,
+];
+
+$connectionParams = [
+    'driver' => 'pdo_pgsql',
+    'host' => ConfigDatabase::$host,
+    'port' => ConfigDatabase::$port,
+    'dbname' => ConfigDatabase::$database,
+    'user' => ConfigDatabase::$username,
+    'password' => ConfigDatabase::$password,
+    'charset' => ConfigDatabase::$charset,
+    'driverOptions' => $options,
+];
+
+try {
+    $conn = DriverManager::getConnection($connectionParams);
+    $conn->executeStatement("SET TIME ZONE '" . ConfigApp::$timezone . "'");
+    //$conn->executeStatement("SET search_path TO scheme,scheme"); TODO schemas
+} catch (Exception $e) {
+
+}
+
+// Logger setup
+$pdo = new \PDO(
+    'pgsql:host=' . ConfigDatabase::$host . ';port=' . ConfigDatabase::$port . ';dbname=' . ConfigDatabase::$database,
+    ConfigDatabase::$username,
+    ConfigDatabase::$password,
+    [
+        \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+        \PDO::ATTR_EMULATE_PREPARES => false,
+    ]
+);
+$logHandler = new CustomPDOHandler($pdo);
+$log = new Logger('app-poynt-log');
+$log->pushHandler($logHandler);
+
+// Add a unique request ID to the context
+$requestId = Uuid::uuid4()->toString();
+$log->pushProcessor(function ($record) use ($requestId) {
+    $record['context']['request_id'] = $requestId;
+    return $record;
+});
+
+$api = new Api($_REQUEST['request'] ?? '', $log, $requestId);
+
+// Dependency injection container
+$appContainer = new Container();
+$appContainer->add('CONN', $conn);
+$appContainer->add('LOG', $log);
+$appContainer->add('API', $api);
+
+// Register controllers
+$appContainer->add('App\Controllers\OAuthController')->addArgument('API')->addArgument('CONN')->addArgument('LOG');
+$appContainer->add('App\Controllers\TokenController')->addArgument('API')->addArgument('CONN')->addArgument('LOG');
+$appContainer->add('App\Controllers\WebhooksController')->addArgument('API')->addArgument('CONN')->addArgument('LOG');
+
+$resolver = new RouterResolver($appContainer);
+
+// Dispatch requests using Phroute
+try {
+    $dispatcher = new Dispatcher($api->loadRouteData(), $resolver);
+    $response = $dispatcher->dispatch($_SERVER['REQUEST_METHOD'], parse_url($_REQUEST['request'], PHP_URL_PATH));
+    Api::response(Response::STATUS_OK, $response);
+} catch (\Phroute\Phroute\Exception\HttpRouteNotFoundException $ex) {
+    Api::response(Response::STATUS_BAD_REQUEST, ['error' => 'Route not found']);
+} catch (\Phroute\Phroute\Exception\HttpMethodNotAllowedException $ex) {
+    Api::response(Response::STATUS_METHOD_NOT_ALLOWED, ['error' => 'Method not allowed']);
+}
