@@ -4,7 +4,6 @@ namespace App\Services;
 
 use AllowDynamicProperties;
 use App\Core\Context;
-use App\Fetchers\MerchantFetcher;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception;
 use GuzzleHttp\Client;
@@ -18,12 +17,16 @@ class MerchantService {
 
     private Context $context;
     private ?string $businessId = null;
+    private Connection $conn;
+    private Logger $log;
 
     const POYNT_ENDPOINT_API_BUSINESS = 'https://services.poynt.net/businesses';
 
     public function __construct(Context $context, ?string $businessId = null)
     {
         $this->context = $context;
+        $this->conn = $context->getConn();
+        $this->log = $context->getLog();
         if ($businessId !== null) {
             $this->businessId = $businessId;
         }
@@ -141,6 +144,62 @@ class MerchantService {
             return $data ?? false; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
             $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Convenience wrapper that fetches merchant business details using the
+     * internally stored business identifier or the one supplied.
+     *
+     * @param string|null $businessId Optional business identifier
+     * @return array|false Merchant data on success, false on failure
+     */
+    public function fetchMerchantBusiness(?string $businessId = null): array|false
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if (!$businessId) {
+            return false;
+        }
+
+        return $this->fetchMerchantBusinessById($businessId);
+    }
+
+    /**
+     * Retrieve orders belonging to a merchant business.
+     *
+     * @param string|null $businessId Optional business identifier
+     * @return array|false Array of orders or false on error
+     */
+    public function fetchMerchantOrders(?string $businessId = null): array|false
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if (!$businessId) {
+            return false;
+        }
+
+        $tokenService = new TokenService($this->context);
+        $accessToken  = $tokenService->getMerchantToken($businessId);
+
+        $httpClient = new Client();
+
+        try {
+            $response = $httpClient->get(self::POYNT_ENDPOINT_API_BUSINESS . '/' . $businessId . '/orders', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $data = json_decode($response->getBody(), true);
+            return $data ?? false;
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error('Error fetching merchant orders: ' . $e->getMessage());
             return false;
         }
     }
@@ -269,117 +328,6 @@ class MerchantService {
         }
     }
 
-
-    /**
-     * Fetch and save merchant business.
-     *
-     * @param string $accessToken OAuth access token.
-     * @return array|false Success(array) or failure(bool).
-     */
-    public function fetchMerchantBusiness(string $accessToken): array|false
-    {
-        $merchantBusiness = $this->fetchMerchantBusiness($accessToken);
-        if (!$merchantBusiness) {
-            $this->log->error("Failed to fetch merchant business.");
-            return false;
-        }
-        return $merchantBusiness;
-    }
-
-    /**
-     * Fetch merchant orders.
-     *
-     * @param string $accessToken
-     * @param string $businessId
-     * @return array|false
-     */
-    public function fetchMerchantOrders(string $accessToken, string $businessId): array|false
-    {
-        $merchantOrders = $this->merchantFetcher->fetchOrders($accessToken, $businessId);
-        if (!$merchantOrders) {
-            $this->log->error("Failed to fetch merchant orders.");
-            return false;
-        }
-        return $merchantOrders;
-    }
-
-    /**
-     * @param string $accessToken
-     * @param string $businessId
-     * @return array|false
-     */
-    public function _fetchMerchantSubscription(string $accessToken, string $businessId): array|false
-    {
-        $merchantSubscription = $this->merchantFetcher->fetchSubscriptionStatus($accessToken, $businessId);
-        if (!$merchantSubscription) {
-            $this->log->error("Failed to fetch merchant subscription.");
-            return false;
-        }
-        return $merchantSubscription;
-    }
-
-    /**
-     * @param string $accessToken
-     * @return array|false
-     */
-    public function fetchApplicationSubscriptionPlans(string $accessToken): array|false
-    {
-        $applicationPlans = $this->merchantFetcher->fetchApplicationSubscriptionPlans($accessToken);
-        if (!$applicationPlans) {
-            $this->log->error("Failed to fetch application subscription plans.");
-            return false;
-        }
-        return $applicationPlans;
-    }
-
-    /**
-     * @param $accessToken
-     * @param $businessId
-     * @param $planId
-     * @return array|false
-     */
-    public function createOrUpdateSubscription($accessToken, $businessId, $planId): array|false
-    {
-        $subscription = $this->merchantFetcher->createOrUpdateSubscription($accessToken, $businessId, $planId);
-        if (!$subscription) {
-            $this->log->error("Failed to fetch application subscription.");
-            return false;
-        }
-        return $subscription;
-    }
-
-
-    /**
-     * @param $accessToken
-     * @param $subscriptionId
-     * @return array|false
-     */
-    public function deleteSubscription($accessToken, $subscriptionId): array|false
-    {
-        $subscriptionDeleted = $this->merchantFetcher->deleteSubscription($accessToken, $subscriptionId);
-        if (!$subscriptionDeleted) {
-            $this->log->error("Failed to delete subscription.");
-            return false;
-        }
-        return $subscriptionDeleted;
-    }
-
-    /**
-     * @param $accessToken
-     * @param $businessId
-     * @param $storeId
-     * @param $deviceId
-     * @return array|false
-     */
-    public function fetchMerchantSubscription($accessToken, $businessId, $storeId = null, $deviceId = null): array|false
-    {
-        $subscriptions = $this->merchantFetcher->fetchMerchantSubscription($accessToken, $businessId, $storeId, $deviceId);
-        if (!$subscriptions) {
-            $this->log->error("Failed to fetch merchants subscriptions.");
-            return false;
-        }
-        return $subscriptions;
-    }
 
 
     /**
