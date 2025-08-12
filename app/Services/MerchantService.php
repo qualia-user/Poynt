@@ -57,7 +57,7 @@ class MerchantService {
     {
         // 1) Validate required keys
         if (!isset($merchantData['id'], $merchantData['legalName'])) {
-            $this->context->log->error(
+            $this->context->getLog()->error(
                 'MerchantService::upsert: missing required merchantData fields (id or legalName)'
             );
             return false;
@@ -72,7 +72,7 @@ class MerchantService {
         // 2) Prepare the full payload as JSON for the metadata column
         $metadata = json_encode($merchantData);
         if ($metadata === false) {
-            $this->context->log->error(
+            $this->context->getLog()->error(
                 "MerchantService::upsert: failed to json_encode merchantData for business_id={$businessId}"
             );
             return false;
@@ -83,14 +83,14 @@ class MerchantService {
 
         try {
             // 4) See if a business row with this business_id already exists
-            $existing = $this->context->conn->fetchAssociative(
+            $existing = $this->context->getConn()->fetchAssociative(
                 'SELECT business_id FROM business WHERE business_id = ?',
                 [$businessId]
             );
 
             if ($existing) {
                 // 5a) UPDATE path (include 'active' here)
-                $this->context->conn->update(
+                $this->context->getConn()->update(
                     'business',
                     [
                         'name' => $name,
@@ -101,10 +101,10 @@ class MerchantService {
                     ['business_id' => $businessId]
                 );
 
-                $this->context->log->info("MerchantService::upsert: updated business {$businessId}");
+                $this->context->getLog()->info("MerchantService::upsert: updated business {$businessId}");
             } else {
                 // 5b) INSERT path (include 'active' here, too)
-                $this->context->conn->insert(
+                $this->context->getConn()->insert(
                     'business',
                     [
                         'business_id' => $businessId,
@@ -116,12 +116,12 @@ class MerchantService {
                     ]
                 );
 
-                $this->context->log->info("MerchantService::upsert: inserted new business {$businessId}");
+                $this->context->getLog()->info("MerchantService::upsert: inserted new business {$businessId}");
             }
 
             return true;
         } catch (\Throwable $e) {
-            $this->context->log->error(
+            $this->context->getLog()->error(
                 "MerchantService::upsert: database error for business_id={$businessId}: "
                 . $e->getMessage()
             );
@@ -154,7 +154,7 @@ class MerchantService {
             $data = json_decode($response->getBody(), true);
             return $data ?? false; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
-            $this->context->log->error("Error fetching merchant details: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
             return false;
         }
 
@@ -183,7 +183,7 @@ class MerchantService {
         SELECT * FROM business WHERE business_id = ?
         SQL;
 
-        $success = $this->context->conn->fetchAssociative($sql, [$businessId]);
+        $success = $this->context->getConn()->fetchAssociative($sql, [$businessId]);
 
         if (is_array($success)) {
             return true;
@@ -219,7 +219,7 @@ class MerchantService {
             $data = json_decode($response->getBody(), true);
             return $data ?? []; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
-            $this->context->log->error("Error fetching merchant details: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
             return [];
         }
     }
@@ -236,7 +236,7 @@ class MerchantService {
 
         // TODO ask GPT is there a way to upsert in this format(DBALL)
         /**
-         * $this->context->conn->insert('webhook_audit', [
+         * $this->context->getConn()->insert('webhook_audit', [
          * 'event_type'    => 'WEBHOOK_REGISTRATION',
          * 'payload'       => json_encode($payload),
          * 'headers'       => json_encode($e->hasResponse() ? $e->getResponse()->getHeaders() : []),
@@ -257,7 +257,7 @@ class MerchantService {
         SQL;
 
         try {
-            $stmt = $this->context->conn->prepare($sql);
+            $stmt = $this->context->getConn()->prepare($sql);
 
             $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
@@ -265,7 +265,7 @@ class MerchantService {
                 if (
                     !isset($store['id'], $store['businessId'], $store['displayName'])
                 ) {
-                    $this->context->log->error(
+                    $this->context->getLog()->error(
                         'MerchantService::insertStores: missing required store fields '
                         . '(id, businessId, or displayName)'
                     );
@@ -278,7 +278,7 @@ class MerchantService {
 
                 $metadata = json_encode($store);
                 if ($metadata === false) {
-                    $this->context->log->error(
+                    $this->context->getLog()->error(
                         "MerchantService::insertStores: failed to json_encode store for store_id={$storeId}"
                     );
                     return false;
@@ -296,7 +296,7 @@ class MerchantService {
 
             return true;
         } catch (\Throwable $e) {
-            $this->context->log->error(
+            $this->context->getLog()->error(
                 "MerchantService::insertStores: database error while inserting/updating stores: "
                 . $e->getMessage()
             );

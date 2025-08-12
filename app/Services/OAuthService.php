@@ -47,14 +47,14 @@ class OAuthService {
         $privateKeyPath = $basePath . DIRECTORY_SEPARATOR . 'private-key.pem';
 
         if (!file_exists($privateKeyPath)) {
-            $this->context->log->warning('Private key file not found');
+            $this->context->getLog()->warning('Private key file not found');
             exit;
         }
 
         $privateKey = file_get_contents($privateKeyPath);
 
         if ($privateKey === false) {
-            $this->context->log->warning('Failed to read private key file');
+            $this->context->getLog()->warning('Failed to read private key file');
         }
 
         // 1. Generate JWT
@@ -90,9 +90,9 @@ class OAuthService {
         } catch (RequestException $e) {
             if ($e->hasResponse()) {
                 $errorResponse = $e->getResponse()->getBody()->getContents();
-                $this->context->log->error("Error: " . $errorResponse);
+                $this->context->getLog()->error("Error: " . $errorResponse);
             } else {
-                $this->context->log->error("Error: " . $e->getMessage());
+                $this->context->getLog()->error("Error: " . $e->getMessage());
             }
         }
 
@@ -111,13 +111,13 @@ class OAuthService {
         $basePath = dirname(__DIR__, 2);
         $privateKeyPath = $basePath . DIRECTORY_SEPARATOR . 'private-key.pem';
         if (!file_exists($privateKeyPath)) {
-            $this->context->log->warning('Private key file not found');
+            $this->context->getLog()->warning('Private key file not found');
             exit;
         }
 
         $privateKey = file_get_contents($privateKeyPath);
         if ($privateKey === false) {
-            $this->context->log->warning('Failed to read private key file');
+            $this->context->getLog()->warning('Failed to read private key file');
             exit;
         }
 
@@ -160,9 +160,9 @@ class OAuthService {
         } catch (RequestException $e) {
             if ($e->hasResponse()) {
                 $errorResponse = $e->getResponse()->getBody()->getContents();
-                $this->context->log->error("Error: " . $errorResponse);
+                $this->context->getLog()->error("Error: " . $errorResponse);
             } else {
-                $this->context->log->error("Error: " . $e->getMessage());
+                $this->context->getLog()->error("Error: " . $e->getMessage());
             }
         }
 
