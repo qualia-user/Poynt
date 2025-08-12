@@ -16,26 +16,12 @@ use Monolog\Logger;
 
 class MerchantService {
 
-//    private Api $api;
-//    private Connection $conn;
-//    private Logger $log;
-//    private MerchantFetcher $merchantFetcher;
-
     private Context $context;
-    private $businessId;
-
+    private ?string $businessId = null;
 
     const POYNT_ENDPOINT_API_BUSINESS = 'https://services.poynt.net/businesses';
 
-//    public function __construct(Api $api, Connection $conn, Logger $log, MerchantFetcher $merchantFetcher) {
-//        $this->api = $api;
-//        $this->conn = $conn;
-//        $this->log = $log;
-//
-//        $this->merchantFetcher = $merchantFetcher;
-//    }
-
-    public function __construct(Context $context, $businessId = null)
+    public function __construct(Context $context, ?string $businessId = null)
     {
         $this->context = $context;
         if ($businessId !== null) {
@@ -157,23 +143,13 @@ class MerchantService {
             $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
             return false;
         }
-
-//
-//        $merchantService = new MerchantService($this->context);
-//
-//        $merchantBusiness = $merchantService->fetchMerchantBusinessById($accessToken, $businessId);
-//        if (!$merchantBusiness) {
-//            $this->context->log->error("Failed to fetch merchant business.");
-//            return false;
-//        }
-//        return $merchantBusiness;
     }
 
     /**
      * @param string|null $businessId
      * @return bool
      */
-    public function merchantExists(string $businessId = null): bool
+    public function merchantExists(?string $businessId = null): bool
     {
         if (is_null($businessId)) {
             $businessId = $this->businessId;
@@ -198,7 +174,7 @@ class MerchantService {
      * @param string|null $businessId
      * @return array
      */
-    public function fetchBusinessStores(string $businessId = null): array
+    public function fetchBusinessStores(?string $businessId = null): array
     {
         if (is_null($businessId)) {
             $businessId = $this->businessId;
@@ -234,17 +210,6 @@ class MerchantService {
             return true;
         }
 
-        // TODO ask GPT is there a way to upsert in this format(DBALL)
-        /**
-         * $this->context->getConn()->insert('webhook_audit', [
-         * 'event_type'    => 'WEBHOOK_REGISTRATION',
-         * 'payload'       => json_encode($payload),
-         * 'headers'       => json_encode($e->hasResponse() ? $e->getResponse()->getHeaders() : []),
-         * 'processed'     => false,
-         * 'error_message' => $errorMsg,
-         * ]);
-         *
-         */
         $sql = <<<SQL
         INSERT INTO store
             (store_id, business_id, name, metadata, created_at, updated_at)
