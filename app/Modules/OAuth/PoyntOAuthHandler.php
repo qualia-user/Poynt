@@ -16,12 +16,14 @@ use GuzzleHttp\Exception\GuzzleException;
 use App\Services\HelperService;
 use App\Services\WebhookService;
 
-//class PoyntOAuthHandler implements OAuthHandlerInterface {
-class PoyntOAuthHandler {
+class PoyntOAuthHandler implements OAuthHandlerInterface
+{
 
     private ?MerchantService $merchantService = null;
 
     private $client;
+    private $clientId;
+    private $clientSecret;
     private $storeId;
     private $businessId;
     private $tokenResponse;
@@ -69,15 +71,17 @@ class PoyntOAuthHandler {
 
     public function retrieveTokens(): array
     {
-
         $this->businessId = $businessId = $this->context->getApi()->getParam('businessId', null);
         $this->storeId = $storeId = $this->context->getApi()->getParam('store_id', null);
         $this->code = $code = $this->context->getApi()->getParam('code', null);
 
         if (!$businessId || !$storeId || !$code) {
             $this->context->getLog()->error("Error: Missing required parameters");
-            Api::response(Response::STATUS_BAD_REQUEST);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_BAD_REQUEST,
+                'error' => 'Missing required parameters',
+            ];
         }
 
         $oauthService = new OAuthService($this->context);
@@ -86,29 +90,45 @@ class PoyntOAuthHandler {
             $appAccessToken = $oauthService->exchangeJwtForToken();
         } catch (\Exception $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Token exchange failed.']);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Token exchange failed.',
+            ];
         } catch (GuzzleException $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Guzzle exception. Token exchange failed.']);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Guzzle exception. Token exchange failed.',
+            ];
         }
 
         try {
             $merchantAccessToken = $oauthService->exchangeAuthCodeForMerchantToken($code, ConfigApp::$redirectUri);
         } catch (\Exception $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Token exchange failed.']);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Token exchange failed.',
+            ];
         } catch (GuzzleException $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Guzzle exception. Token exchange failed.']);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Guzzle exception. Token exchange failed.',
+            ];
         }
 
-
-        return [$appAccessToken, $merchantAccessToken];
-
+        return [
+            'success' => true,
+            'data' => [
+                'appAccessToken' => $appAccessToken,
+                'merchantAccessToken' => $merchantAccessToken,
+            ],
+        ];
     }
 
     /**
@@ -178,39 +198,52 @@ class PoyntOAuthHandler {
 
 
     /**
-     * @return array|mixed|null
+     * @return array
      * @throws GuzzleException
      */
-    public function getTokenResponse(): mixed
+    public function getTokenResponse(): array
     {
         $this->businessId = $businessId = $this->context->getApi()->getParam('businessId', null);
         $this->storeId = $storeId = $this->context->getApi()->getParam('store_id', null);
 
         if (!$businessId || !$storeId) {
             $this->context->getLog()->error("Error: Missing required parameters");
-            Api::response(Response::STATUS_BAD_REQUEST);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_BAD_REQUEST,
+                'error' => 'Missing required parameters',
+            ];
         }
 
-        // Exchange tokens for authentication
         try {
             $oauthService = new OAuthService($this->context);
-            return $oauthService->exchangeJwtForToken();
+            $token = $oauthService->exchangeJwtForToken();
+            return [
+                'success' => true,
+                'data' => $token,
+            ];
         } catch (\Exception $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Token exchange failed.']);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Token exchange failed.',
+            ];
         } catch (GuzzleException $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Guzzle exception. Token exchange failed.']);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Guzzle exception. Token exchange failed.',
+            ];
         }
     }
+
     /**
-     * @return array|mixed|null
+     * @return array
      * @throws GuzzleException
      */
-    public function getMerchantTokenResponse(): mixed
+    public function getMerchantTokenResponse(): array
     {
         $this->businessId = $businessId = $this->context->getApi()->getParam('businessId', null);
         $this->storeId = $storeId = $this->context->getApi()->getParam('store_id', null);
@@ -218,23 +251,40 @@ class PoyntOAuthHandler {
 
         if (!$businessId || !$storeId || !$code) {
             $this->context->getLog()->error("Error: Missing required parameters");
-            Api::response(Response::STATUS_BAD_REQUEST);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_BAD_REQUEST,
+                'error' => 'Missing required parameters',
+            ];
         }
 
-        // Exchange tokens for authentication
         try {
             $oauthService = new OAuthService($this->context);
-            return $oauthService->exchangeAuthCodeForMerchantToken($code, ConfigApp::$redirectUri);
+            $token = $oauthService->exchangeAuthCodeForMerchantToken($code, ConfigApp::$redirectUri);
+            return [
+                'success' => true,
+                'data' => $token,
+            ];
         } catch (\Exception $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Token exchange failed.']);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Token exchange failed.',
+            ];
         } catch (GuzzleException $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Guzzle exception. Token exchange failed.']);
-            exit;
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Guzzle exception. Token exchange failed.',
+            ];
         }
+    }
+
+    public function _getTokenResponse()
+    {
+        return $this->getTokenResponse();
     }
 
     // TODO remove along with interface definition
@@ -413,12 +463,22 @@ class PoyntOAuthHandler {
         if (HelperService::validateTokenResponse($tokenResponse)) {
             if (!$merchantOrders = $this->getMerchantService()->fetchMerchantOrders($tokenResponse['accessToken'], $this->businessId)) {
                 $this->context->getLog()->error("Error: Failed to fetch merchant orders");
-                Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Failed to fetch merchant details.']);
-                exit;
-            } else {
-                return $merchantOrders;
+                return [
+                    'success' => false,
+                    'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                    'error' => 'Failed to fetch merchant details.',
+                ];
             }
+            return [
+                'success' => true,
+                'data' => $merchantOrders,
+            ];
         }
+        return [
+            'success' => false,
+            'status' => Response::STATUS_BAD_REQUEST,
+            'error' => 'Invalid token response',
+        ];
     }
 
 
@@ -433,7 +493,6 @@ class PoyntOAuthHandler {
     {
         if (!$saved = $this->getMerchantService()->saveMerchant($merchantData, $this->storeId, $this->tokenResponse)) {
             $this->context->getLog()->error("Error: Failed to save merchant details");
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Failed to save merchant details.']);
             return false;
         }
         $this->context->getLog()->info('Merchant data saved successfully.');
