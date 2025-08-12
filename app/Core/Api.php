@@ -68,7 +68,7 @@ use App\Core\Response;
             $this->method = match ($_SERVER['HTTP_X_HTTP_METHOD']) {
                 'DELETE' => 'DELETE',
                 'PUT' => 'PUT',
-                default => self::response(Response::StatusMethodNotAllowed),
+                default => self::response(Response::STATUS_METHOD_NOT_ALLOWED),
             };
         }
 
@@ -138,7 +138,7 @@ use App\Core\Response;
             $this->method = match ($_SERVER['HTTP_X_HTTP_METHOD']) {
                 'DELETE' => 'DELETE',
                 'PUT' => 'PUT',
-                default => self::response(Response::StatusMethodNotAllowed),
+                default => self::response(Response::STATUS_METHOD_NOT_ALLOWED),
             };
         }
 
