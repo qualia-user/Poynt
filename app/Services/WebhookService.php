@@ -61,7 +61,7 @@ class WebhookService
             $responseData = json_decode($response->getBody(), true);
 
             // Insert an audit record for this outgoing registration call
-            $this->context->conn->insert('webhook_audit', [
+            $this->context->getConn()->insert('webhook_audit', [
                 'event_type'    => 'WEBHOOK_REGISTRATION',
                 'payload'       => json_encode($payload),
                 'headers'       => json_encode($response->getHeaders()),
@@ -69,7 +69,7 @@ class WebhookService
                 'error_message' => null,
             ]);
 
-            $this->context->log->info("Webhook registered successfully", $responseData);
+            $this->context->getLog()->info("Webhook registered successfully", $responseData);
             return $responseData;
 
         } catch (RequestException $e) {
@@ -78,7 +78,7 @@ class WebhookService
                 : $e->getMessage();
 
             // Insert an audit record capturing the failure
-            $this->context->conn->insert('webhook_audit', [
+            $this->context->getConn()->insert('webhook_audit', [
                 'event_type'    => 'WEBHOOK_REGISTRATION',
                 'payload'       => json_encode($payload),
                 'headers'       => json_encode($e->hasResponse() ? $e->getResponse()->getHeaders() : []),
@@ -89,7 +89,7 @@ class WebhookService
                 'processed' => PDO::PARAM_BOOL,
             ]);
 
-            $this->context->log->error(
+            $this->context->getLog()->error(
                 "Webhook registration for payload " . json_encode($payload) .
                 " failed with error: " . $errorMsg
             );
@@ -342,14 +342,14 @@ class WebhookService
             $responseData = $this->registerWebhook($merchantToken, $events);
 
             if ($responseData) {
-                $this->context->log->info('Successfully registered webhooks: ' . implode(', ', $events), $responseData);
+                $this->context->getLog()->info('Successfully registered webhooks: ' . implode(', ', $events), $responseData);
             } else if (is_null($responseData)) {
-                $this->context->log->error('Something went wrong, response data for webhooks: ' . implode(', ', $events) . ' is null.', []);
+                $this->context->getLog()->error('Something went wrong, response data for webhooks: ' . implode(', ', $events) . ' is null.', []);
             }
 
         } catch (GuzzleException $e) {
             // If the request fails, capture error details:
-            $this->context->log->error(
+            $this->context->getLog()->error(
                 'Error registering webhooks: ' . implode(', ', $events) . ' ‒ ' . $e->getMessage()
             );
             // Optionally rethrow or swallow depending on your error‐handling policy:

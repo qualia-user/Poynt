@@ -11,7 +11,7 @@ use Doctrine\DBAL\Exception;
  * TokenService manages persistence for both app-level tokens (app_token)
  * and merchant-level tokens (merchant_token) in a PostgreSQL database.
  *
- * All DB operations use $this->context->conn and wrap SQL calls in try/catch,
+ * All DB operations use $this->context->getConn() and wrap SQL calls in try/catch,
  * rethrowing as RuntimeException on failure.
  */
 class TokenService {
@@ -58,7 +58,7 @@ class TokenService {
         SQL;
 
         try {
-            $stmt = $this->context->conn->prepare($sql);
+            $stmt = $this->context->getConn()->prepare($sql);
             $stmt->execute([
                 'biz'     => $businessId,
                 'access'  => $token['accessToken'],
@@ -91,7 +91,7 @@ class TokenService {
         SQL;
 
         try {
-            $row = $this->context->conn->fetchAssociative($sql, [
+            $row = $this->context->getConn()->fetchAssociative($sql, [
                 'biz' => $businessId
             ]);
 
@@ -116,7 +116,7 @@ class TokenService {
 //        SQL;
 //
 //        try {
-//            $stmt = $this->context->conn->prepare($sql);
+//            $stmt = $this->context->getConn()->prepare($sql);
 //            $stmt->execute(['biz' => $businessId]);
 //            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
 //
@@ -149,7 +149,7 @@ class TokenService {
         SQL;
 
         try {
-            $stmt = $this->context->conn->prepare($sql);
+            $stmt = $this->context->getConn()->prepare($sql);
             $stmt->execute();
             return $stmt->fetchAll(\PDO::FETCH_ASSOC);
         } catch (\Exception $e) {
@@ -195,7 +195,7 @@ class TokenService {
         SQL;
 
         try {
-            $stmt = $this->context->conn->prepare($sql);
+            $stmt = $this->context->getConn()->prepare($sql);
             $stmt->execute([
                 'biz'     => $businessId,
                 'access'  => $token['accessToken'],
@@ -228,7 +228,7 @@ class TokenService {
         SQL;
 
         try {
-            $row = $this->context->conn->fetchAssociative($sql, [
+            $row = $this->context->getConn()->fetchAssociative($sql, [
                 'biz' => $businessId
             ]);
 
@@ -264,7 +264,7 @@ class TokenService {
         SQL;
 
         try {
-            $stmt = $this->context->conn->prepare($sql);
+            $stmt = $this->context->getConn()->prepare($sql);
             $stmt->execute();
             return $stmt->fetchAll(\PDO::FETCH_ASSOC);
         } catch (\Exception $e) {

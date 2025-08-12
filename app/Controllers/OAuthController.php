@@ -97,7 +97,7 @@ class OAuthController extends Controller {
                 $inserted = $merchantService->upsertStores($stores);
 
                 if (!$inserted) {
-                    $this->context->log->error('Failed to insert stores for new merchant.');
+                    $this->context->getLog()->error('Failed to insert stores for new merchant.');
                     // TODO?
                     return;
                 }

@@ -31,7 +31,7 @@ class WebhooksController extends Controller
 
         $payload = $this->api->data ?? [];
         $info = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-        $this->context->log->info("Webhook info: " . $info);
+        $this->context->getLog()->info("Webhook info: " . $info);
 
         // Determine the event type from the payload.
         $eventType = $payload['eventType'] ?? null;

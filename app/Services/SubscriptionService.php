@@ -61,11 +61,11 @@ class SubscriptionService
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()
                 : $e->getMessage();
-            $this->context->log->error("Error fetching plans: " . $msg);
+            $this->context->getLog()->error("Error fetching plans: " . $msg);
 
             return null;
         } catch (GuzzleException $e) {
-            $this->context->log->error("Error fetching plans: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching plans: " . $e->getMessage());
             return null;
         }
     }
@@ -125,7 +125,7 @@ class SubscriptionService
         SQL;
 
         try {
-            $this->context->conn->executeStatement($sql, [
+            $this->context->getConn()->executeStatement($sql, [
                 'sub_id' => $subscriptionId,
                 'biz'    => $businessId,
                 'store'  => $storeId,
@@ -138,7 +138,7 @@ class SubscriptionService
                 'cpe'    => $trialEnd->format('Y-m-d H:i:sP'),
             ]);
         } catch (Exception $e) {
-            $this->context->log->error("Failed to insert initial subscription for store_id={$storeId}: " . $e->getMessage() . ". " . (int)$e->getCode() . ". Exception: ". json_encode($e));
+            $this->context->getLog()->error("Failed to insert initial subscription for store_id={$storeId}: " . $e->getMessage() . ". " . (int)$e->getCode() . ". Exception: ". json_encode($e));
         }
 
         return $subscriptionId;
@@ -201,7 +201,7 @@ class SubscriptionService
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()
                 : $e->getMessage();
-            $this->context->log->error("Poynt CREATE subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+            $this->context->getLog()->error("Poynt CREATE subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
         }
 
         // Overwrite local row (which likely already exists as a “trial”) with Poynt’s data
@@ -246,9 +246,9 @@ class SubscriptionService
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()
                 : $e->getMessage();
-            $this->context->log->error("Poynt GET subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+            $this->context->getLog()->error("Poynt GET subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
         } catch (GuzzleException $e) {
-            $this->context->log->error("Poynt GET subscription failed: ". json_encode($e));
+            $this->context->getLog()->error("Poynt GET subscription failed: ". json_encode($e));
         }
 
         // Upsert each subscription into local DB
@@ -291,17 +291,17 @@ class SubscriptionService
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()
                 : $e->getMessage();
-            $this->context->log->error("Poynt DELETE subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+            $this->context->getLog()->error("Poynt DELETE subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
         }
 
         // Remove from local subscription table
         try {
-            $this->context->conn->executeStatement(
+            $this->context->getConn()->executeStatement(
                 "UPDATE subscription SET status = :status, updated_at = :upat WHERE subscription_id = :sub_id",
                 ['sub_id' => $subscriptionId, 'status' => 'canceled', 'upat' => date('Y-m-d H:i:s')]
             );
         } catch (\Exception $e) {
-            $this->context->log->error("Poynt DELETE subscription failed: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+            $this->context->getLog()->error("Poynt DELETE subscription failed: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
         }
 
         return $respData;
@@ -387,7 +387,7 @@ class SubscriptionService
         SQL;
 
         try {
-            $this->context->conn->executeStatement($sql, [
+            $this->context->getConn()->executeStatement($sql, [
                 'sub_id'      => $subscriptionId,
                 'biz'         => $businessId,
                 'store'       => $storeId,
@@ -402,7 +402,7 @@ class SubscriptionService
                 'canceledAt'  => $canceledAt,
             ]);
         } catch (\Exception $e) {
-            $this->context->log->error("Failed to upsert local subscription {$subscriptionId}: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+            $this->context->getLog()->error("Failed to upsert local subscription {$subscriptionId}: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
         }
     }
 
