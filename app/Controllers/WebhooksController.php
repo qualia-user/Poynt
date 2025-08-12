@@ -54,14 +54,11 @@ class WebhooksController extends Controller
                 break;
 
             default:
-                header("Content-Type: application/json", true, 400);
-                echo json_encode(['error' => 'Unrecognized event']);
-                return;
+                Api::response(Response::STATUS_BAD_REQUEST, ['error' => 'Unrecognized event']);
         }
 
         // Respond to acknowledge the event has been processed.
-        header("Content-Type: application/json", true, 200);
-        echo json_encode(['status' => 'ok']);
+        Api::response(Response::STATUS_OK, ['status' => 'ok']);
     }
 
     /**
