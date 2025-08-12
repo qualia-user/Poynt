@@ -6,19 +6,19 @@ class Response
     const STATUS_OK = 200;
 
     const STATUS_BAD_REQUEST = 400;
-    const StatusUnauthorized = 401;
-    const StatusForbidden = 403;
-    const StatusNotFound = 404;
+    const STATUS_UNAUTHORIZED = 401;
+    const STATUS_FORBIDDEN = 403;
+    const STATUS_NOT_FOUND = 404;
     const STATUS_METHOD_NOT_ALLOWED = 405;
-    const StatusConflict = 409;
-    const StatusRequestEntityTooLarge = 413;
-    const StatusSubscriptionPlanLimit = 441;
-    const StatusEmailAlreadyExists = 442;
-    const StatusFreeTrialFinished = 443;
-    const StatusModelCreationLimit = 445;
-    const StatusApiRateLimitExceeded = 429;
+    const STATUS_CONFLICT = 409;
+    const STATUS_REQUEST_ENTITY_TOO_LARGE = 413;
+    const STATUS_SUBSCRIPTION_PLAN_LIMIT = 441;
+    const STATUS_EMAIL_ALREADY_EXISTS = 442;
+    const STATUS_FREE_TRIAL_FINISHED = 443;
+    const STATUS_MODEL_CREATION_LIMIT = 445;
+    const STATUS_API_RATE_LIMIT_EXCEEDED = 429;
     const STATUS_INTERNAL_SERVER_ERROR = 500;
-    const StatusNotImplemented = 501;
+    const STATUS_NOT_IMPLEMENTED = 501;
 
     public static $imageTypes = [
         'image/jpeg',
