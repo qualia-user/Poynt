@@ -137,10 +137,12 @@ class OAuthController extends Controller {
                 $this->log->error("Failed to save merchant data.");
                 Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Failed to save merchant data.']);
             }
+        } catch (GuzzleException $e) {
+            $this->log->error("HTTP request error during callback: " . $e->getMessage());
+            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => $e->getMessage()]);
         } catch (\Exception $e) {
             $this->log->error("Error during callback: " . $e->getMessage());
             Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => $e->getMessage()]);
-        } catch (GuzzleException $e) {
         }
 
         exit;
