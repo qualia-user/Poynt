@@ -70,6 +70,98 @@ class SubscriptionService
         }
     }
 
+    /**
+     * Legacy alias for fetching application subscription plans. Uses an
+     * app-level access token obtained via the JWT exchange.
+     *
+     * @param string $appAccessToken
+     * @return array|null
+     */
+    public function fetchApplicationSubscriptionPlans(string $appAccessToken): ?array
+    {
+        return $this->fetchPlans($appAccessToken);
+    }
+
+    /**
+     * Fetch subscriptions for a merchant using the merchant's access token.
+     *
+     * @param string $merchantAccessToken
+     * @param string $businessId
+     * @param string|null $storeId
+     * @param string|null $deviceId
+     * @param string|null $status
+     * @return array|null
+     */
+    public function fetchMerchantSubscriptions(
+        string $merchantAccessToken,
+        string $businessId,
+        ?string $storeId = null,
+        ?string $deviceId = null,
+        ?string $status = null
+    ): ?array {
+        $orgId = ConfigApp::$orgId;
+        $appId = 'urn:aid:' . ConfigApp::$appId;
+        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions";
+
+        $query = ['businessId' => $businessId];
+        if ($storeId) {
+            $query['storeId'] = $storeId;
+        }
+        if ($deviceId) {
+            $query['deviceId'] = $deviceId;
+        }
+        if ($status) {
+            $query['status'] = $status;
+        }
+
+        try {
+            $response = $this->http->get($endpoint, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $merchantAccessToken,
+                    'Accept'        => 'application/json',
+                ],
+                'query' => $query,
+            ]);
+            return json_decode((string)$response->getBody(), true);
+        } catch (RequestException $e) {
+            $msg = $e->hasResponse()
+                ? $e->getResponse()->getBody()->getContents()
+                : $e->getMessage();
+            $this->context->getLog()->error('Error fetching merchant subscriptions: ' . $msg);
+            return null;
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error('Error fetching merchant subscriptions: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Convenience wrapper around fetchMerchantSubscriptions for callers that
+     * expect a singular method name.
+     *
+     * @param string      $merchantAccessToken
+     * @param string      $businessId
+     * @param string|null $storeId
+     * @param string|null $deviceId
+     * @param string|null $status
+     * @return array|null
+     */
+    public function fetchMerchantSubscription(
+        string $merchantAccessToken,
+        string $businessId,
+        ?string $storeId = null,
+        ?string $deviceId = null,
+        ?string $status = null
+    ): ?array {
+        return $this->fetchMerchantSubscriptions(
+            $merchantAccessToken,
+            $businessId,
+            $storeId,
+            $deviceId,
+            $status
+        );
+    }
+
 
     // ────────────────────────────────────────────────────────────────────────────
     // 1) Start a local-only free trial
