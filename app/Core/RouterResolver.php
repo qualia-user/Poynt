@@ -2,21 +2,20 @@
 namespace App\Core;
 
 use Phroute;
-use League;
+use League\Container\Container;
 
 class RouterResolver implements Phroute\Phroute\HandlerResolverInterface
 {
-    private $container;
+    private Container $container;
 
-    public function __construct(League\Container\Container $container)
+    public function __construct(Container $container)
     {
         $this->container = $container;
     }
 
-    public function resolve($handler)
+    public function resolve(array|callable $handler): array|callable
     {
-        if(is_array($handler) and is_string($handler[0]))
-        {
+        if (is_array($handler) && is_string($handler[0])) {
             $handler[0] = $this->container->get($handler[0]);
         }
 
