@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Core\Context;
 use DateInterval;
 use DateTime;
-use Doctrine\DBAL\Exception;
 
 /**
  * TokenService manages persistence for both app-level tokens (app_token)
@@ -18,7 +17,8 @@ class TokenService {
 
     private Context $context;
 
-    public function __construct($context) {
+    public function __construct(Context $context)
+    {
         $this->context = $context;
     }
 
