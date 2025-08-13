@@ -227,8 +227,8 @@ class Api
 //        $router->post('/webhooks/event-listener', ['App\Controllers\WebhooksController', 'eventListener']);
         $router->post('/webhooks/event-listener', ['App\Controllers\WebhooksController', 'eventListener']);
 
-        // Refresh token route
-        $router->post('/api/token/refresh', ['YourApp\Controllers\TokenController', 'refreshToken']);
+        // Internal route to trigger token refreshes
+        $router->post('/internal/refresh-tokens', ['App\Controllers\TokenController', 'refreshTokens']);
 
         return $router->getData();
     }
