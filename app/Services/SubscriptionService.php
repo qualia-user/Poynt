@@ -162,6 +162,45 @@ class SubscriptionService
         );
     }
 
+    /**
+     * Determine if a subscription's trial period has expired using its ID.
+     *
+     * @param string $subscriptionId Subscription identifier.
+     * @return bool True if the trial end date has passed, false otherwise.
+     */
+    public function hasTrialExpired(string $subscriptionId): bool
+    {
+        $sql = <<<SQL
+        SELECT trial_end_at
+          FROM subscription
+         WHERE subscription_id = :sub_id
+         LIMIT 1
+        SQL;
+
+        try {
+            $row = $this->context->getConn()->fetchAssociative($sql, [
+                'sub_id' => $subscriptionId,
+            ]);
+        } catch (Exception $e) {
+            $this->context->getLog()->error('Error fetching trial end date: ' . $e->getMessage());
+            return false;
+        }
+
+        $trialEnd = $row['trial_end_at'] ?? null;
+        if (!$trialEnd) {
+            return false;
+        }
+
+        try {
+            $trialEndDate = new DateTime($trialEnd, new DateTimeZone('UTC'));
+            $now = new DateTime('now', new DateTimeZone('UTC'));
+            return $now > $trialEndDate;
+        } catch (Exception $e) {
+            $this->context->getLog()->error('Error parsing trial end date: ' . $e->getMessage());
+            return false;
+        }
+    }
+
 
     // ────────────────────────────────────────────────────────────────────────────
     // 1) Start a local-only free trial
