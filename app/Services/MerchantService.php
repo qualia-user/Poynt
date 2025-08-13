@@ -3,21 +3,16 @@
 namespace App\Services;
 
 use App\Core\Context;
-use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use League\Container\Container;
 use Ramsey\Uuid\Uuid;
-use App\Core\Api;
-use Monolog\Logger;
 
 class MerchantService {
 
     private Context $context;
     private ?string $businessId = null;
-    private Connection $conn;
-    private Logger $log;
     private ?Client $httpClient = null;
     private ?\PDO $db = null;
     private ?\PDO $pdo = null;
@@ -27,8 +22,6 @@ class MerchantService {
     public function __construct(Context $context, ?string $businessId = null)
     {
         $this->context = $context;
-        $this->conn = $context->getConn();
-        $this->log = $context->getLog();
         $this->httpClient = new Client();
         if ($businessId !== null) {
             $this->businessId = $businessId;
@@ -367,7 +360,7 @@ class MerchantService {
             ];
 
             // Check if the merchant already exists
-            $existingMerchant = $this->conn->fetchAssociative(
+            $existingMerchant = $this->context->getConn()->fetchAssociative(
                 "SELECT id, metadata FROM merchant WHERE store_id = :store_id",
                 ['store_id' => $storeId]
             );
@@ -378,7 +371,7 @@ class MerchantService {
                 $mergedMetadata = array_merge($existingMetadata, $metadata);
 
                 // Update existing merchant
-                $this->conn->update('merchant', [
+                $this->context->getConn()->update('merchant', [
                     'store_id' => $storeId,
                     'name' => $name,
                     'metadata' => json_encode($mergedMetadata),
@@ -388,7 +381,7 @@ class MerchantService {
                 ]);
             } else {
                 // Insert new merchant
-                $this->conn->insert('merchant', [
+                $this->context->getConn()->insert('merchant', [
                     'business_id' => $businessId,
                     'store_id' => $storeId,
                     'name' => $name,
@@ -400,7 +393,7 @@ class MerchantService {
 
             return true;
         } catch (\Exception $e) {
-            $this->log->error('Failed to save merchant data: ' . $e->getMessage());
+            $this->context->getLog()->error('Failed to save merchant data: ' . $e->getMessage());
             return false;
         }
     }
@@ -424,14 +417,14 @@ class MerchantService {
             $timezone = $merchantDetails['timezone'] ?? null;
 
             // Check if the merchant already exists
-            $existingMerchant = $this->conn->fetchAssociative(
+            $existingMerchant = $this->context->getConn()->fetchAssociative(
                 "SELECT id FROM merchant WHERE store_id = :store_id",
                 ['store_id' => $storeId]
             );
 
             if ($existingMerchant) {
                 // Update existing merchant
-                $this->conn->update('merchant', [
+                $this->context->getConn()->update('merchant', [
                     'store_id' => $storeId,
                     'name' => $name,
                     'legal_name' => $legalName,
@@ -450,7 +443,7 @@ class MerchantService {
                 ]);
             } else {
                 // Insert new merchant
-                $this->conn->insert('merchant', [
+                $this->context->getConn()->insert('merchant', [
                     'business_id' => $businessId,
                     'store_id' => $storeId,
                     'name' => $name,
@@ -468,8 +461,8 @@ class MerchantService {
             }
 
             // Save token data in token table
-            $merchantId = $existingMerchant['id'] ?? $this->conn->lastInsertId();
-            $this->conn->insert('token', [
+            $merchantId = $existingMerchant['id'] ?? $this->context->getConn()->lastInsertId();
+            $this->context->getConn()->insert('token', [
                 'merchant_id' => $merchantId,
                 'access_token' => $tokenResponse['accessToken'],
                 'refresh_token' => $tokenResponse['refreshToken'],
@@ -478,7 +471,7 @@ class MerchantService {
 
             return true;
         } catch (\Exception $e) {
-            $this->log->error('Failed to save merchant data: ' . $e->getMessage());
+            $this->context->getLog()->error('Failed to save merchant data: ' . $e->getMessage());
             return false;
         }
     }
@@ -504,7 +497,7 @@ class MerchantService {
             $data = json_decode($response->getBody(), true);
             return $data['business'] ?? null; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
-            $this->log->error("Error fetching merchant details: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
             return null;
         }
     }
@@ -521,14 +514,14 @@ class MerchantService {
             $tokenExpiry = date('Y-m-d H:i:s', $data['token_expiry']);
 
             // Check if the merchant already exists
-            $existingMerchant = $this->conn->fetchAssociative(
+            $existingMerchant = $this->context->getConn()->fetchAssociative(
                 "SELECT id FROM merchant WHERE business_id = :business_id",
                 ['business_id' => $businessId]
             );
 
             if ($existingMerchant) {
                 // Update existing record
-                $this->conn->update('merchant', [
+                $this->context->getConn()->update('merchant', [
                     'store_id' => $storeId,
                     'access_token' => $accessToken,
                     'refresh_token' => $refreshToken,
@@ -539,7 +532,7 @@ class MerchantService {
                 ]);
             } else {
                 // Insert new record
-                $this->conn->insert('merchant', [
+                $this->context->getConn()->insert('merchant', [
                     'business_id' => $businessId,
                     'store_id' => $storeId,
                     'access_token' => $accessToken,
@@ -550,7 +543,7 @@ class MerchantService {
 
             return true;
         } catch (Exception $e) {
-            $this->log->error('Failed to save merchant data: ' . $e->getMessage() . ', ' . $e->getCode() . ', ' . json_encode($e));
+            $this->context->getLog()->error('Failed to save merchant data: ' . $e->getMessage() . ', ' . $e->getCode() . ', ' . json_encode($e));
         }
     }
 
@@ -567,7 +560,7 @@ class MerchantService {
 
         // Check if the merchant already exists
         $query = "SELECT id FROM merchant WHERE business_id = :business_id";
-        $stmt = $this->conn->prepare($query);
+        $stmt = $this->context->getConn()->prepare($query);
         $stmt->bindValue(':business_id', $businessId);
         $result = $stmt->executeStatement();
 
