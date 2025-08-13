@@ -166,6 +166,12 @@ class SubscriptionService
     /**
      * Determine if a subscription's trial period has expired using its ID.
      *
+     *  Queries the local `subscription` table for the `trial_end_at` timestamp and
+     *  compares it with the current time in UTC.
+     *
+     *  When the trial has elapsed callers may respond with
+     *  {@see Response::STATUS_FREE_TRIAL_FINISHED} to enforce limits.
+     *
      * @param string $subscriptionId Subscription identifier.
      * @return bool True if the trial end date has passed, false otherwise.
      */
@@ -536,45 +542,6 @@ class SubscriptionService
         } catch (\Exception $e) {
             $this->context->getLog()->error("Failed to upsert local subscription {$subscriptionId}: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
         }
-    }
-
-    /**
-     * Determines if a subscription's free-trial period has expired.
-     *
-     * Queries the local `subscription` table for the `trial_end_at` timestamp and
-     * compares it with the current time in UTC.
-     *
-     * When the trial has elapsed callers may respond with
-     * {@see Response::STATUS_FREE_TRIAL_FINISHED} to enforce limits.
-     *
-     * @param string $subscriptionId
-     * @return bool Returns true (or \App\Core\Response::STATUS_FREE_TRIAL_FINISHED)
-     *              if the trial has expired; otherwise false.
-     */
-    public function hasTrialExpired(string $subscriptionId): bool
-    {
-        try {
-            $trialEndAt = $this->context->getConn()->fetchOne(
-                'SELECT trial_end_at FROM subscription WHERE subscription_id = :sub_id',
-                ['sub_id' => $subscriptionId]
-            );
-        } catch (Exception $e) {
-            $this->context->getLog()->error(
-                'Failed to fetch trial_end_at for subscription ' . $subscriptionId . ': ' . $e->getMessage()
-            );
-            return false;
-        }
-
-        if (!$trialEndAt) {
-            return false;
-        }
-
-        $nowUtc      = new DateTime('now', new DateTimeZone('UTC'));
-        $trialEndUtc = new DateTime($trialEndAt, new DateTimeZone('UTC'));
-
-        return $nowUtc > $trialEndUtc
-            ? Response::STATUS_FREE_TRIAL_FINISHED
-            : false;
     }
 
 }
