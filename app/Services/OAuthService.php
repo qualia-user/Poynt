@@ -3,14 +3,11 @@
 namespace App\Services;
 
 use App\Config\ConfigApp;
-use App\Core\Api;
 use App\Core\Context;
-use Doctrine\DBAL\Connection;
 use Firebase\JWT\JWT;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
-use Monolog\Logger;
 use Ramsey\Uuid\Uuid;
 
 class OAuthService {
@@ -20,18 +17,10 @@ class OAuthService {
     const JWT_SIGNING_ALGORITHM = 'RS256';
     const JWT_EXPIRATION_TIME = 30; // 3600
 
-    private Api $api;
-    private Connection $conn;
-    private Logger $log;
-
     private Context $context;
 
     public function __construct(Context $context)
     {
-//        $this->api = $api;
-//        $this->conn = $conn;
-//        $this->log = $log;
-
         $this->context = $context;
     }
 
