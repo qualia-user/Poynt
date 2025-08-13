@@ -5,21 +5,21 @@ use App\Config\ConfigApp;
 use Doctrine\DBAL\Driver\IBMDB2\Result;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
-use Psr\Log\LoggerInterface;
+use App\Core\Context;
 
 class MerchantFetcher
 {
     private Client $httpClient;
-    private LoggerInterface $log;
+    private Context $context;
 
     const POYNT_ENDPOINT_API = 'https://services.poynt.net/businesses';
     const POYNT_ENDPOINT_GET_BUSINESS = 'https://services.poynt.net/businesses';
     const POYNT_ENDPOINT_GET_ORDERS = 'https://services.poynt.net/businesses';
 
-    public function __construct(LoggerInterface $log)
+    public function __construct(Context $context)
     {
+        $this->context = $context;
         $this->httpClient = new Client();
-        $this->log = $log;
     }
 
     /**
@@ -57,7 +57,7 @@ class MerchantFetcher
             return $data ?? null;
         } catch (GuzzleException $e) {
             // Log any errors encountered
-            $this->log->error("Error fetching subscription plans: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching subscription plans: " . $e->getMessage());
             return null;
         }
     }
@@ -81,7 +81,7 @@ class MerchantFetcher
             $data = json_decode($response->getBody(), true);
             return $data ?? null; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
-            $this->log->error("Error fetching merchant details: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
             return null;
         }
     }
@@ -104,7 +104,7 @@ class MerchantFetcher
             $data = json_decode($response->getBody(), true);
             return $data ?? null; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
-            $this->log->error("Error fetching merchant details: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
             return null;
         }
     }
@@ -126,7 +126,7 @@ class MerchantFetcher
             $data = json_decode($response->getBody(), true);
             return $data ?? null; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
-            $this->log->error("Error fetching merchant details: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
             return null;
         }
     }
@@ -197,7 +197,7 @@ class MerchantFetcher
             return $data ?? null;
         } catch (GuzzleException $e) {
             // Log any errors encountered
-            $this->log->error("Error creating/updating subscription: " . $e->getMessage());
+            $this->context->getLog()->error("Error creating/updating subscription: " . $e->getMessage());
             return null;
         }
     }
@@ -229,7 +229,7 @@ class MerchantFetcher
             return in_array($response->getStatusCode(), [200, 204], true);
         } catch (GuzzleException $e) {
             // Log the error
-            $this->log->error("Error deleting subscription: " . $e->getMessage());
+            $this->context->getLog()->error("Error deleting subscription: " . $e->getMessage());
             return false;
         }
     }
@@ -291,7 +291,7 @@ class MerchantFetcher
             return $data ?? null;
         } catch (GuzzleException $e) {
             // Log any errors encountered
-            $this->log->error("Error fetching merchant subscriptions: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching merchant subscriptions: " . $e->getMessage());
             return null;
         }
     }
@@ -315,7 +315,7 @@ class MerchantFetcher
             return $data ?? null;
         } catch (GuzzleException $e) {
             // Log any errors encountered
-            $this->log->error("Error fetching subscription status: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching subscription status: " . $e->getMessage());
             return null;
         }
     }
