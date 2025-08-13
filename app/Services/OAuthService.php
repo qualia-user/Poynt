@@ -157,5 +157,40 @@ class OAuthService {
 
         return null;
     }
+
+    /**
+     * Refresh a merchant token using a refresh token.
+     *
+     * @param string $refreshToken
+     * @return array|null
+     */
+    public function refreshMerchantToken(string $refreshToken): ?array
+    {
+        try {
+            $client = new Client();
+            $response = $client->post(self::POYNT_ENDPOINT_TOKEN, [
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'api-version'  => '1.2',
+                ],
+                'form_params' => [
+                    'grant_type'    => 'refresh_token',
+                    'refresh_token' => $refreshToken,
+                    'client_id'     => ConfigApp::$appId,
+                ],
+            ]);
+
+            return json_decode($response->getBody(), true);
+        } catch (RequestException $e) {
+            if ($e->hasResponse()) {
+                $errorResponse = $e->getResponse()->getBody()->getContents();
+                $this->context->getLog()->error("Error: " . $errorResponse);
+            } else {
+                $this->context->getLog()->error("Error: " . $e->getMessage());
+            }
+        }
+
+        return null;
+    }
 }
 

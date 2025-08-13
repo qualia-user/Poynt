@@ -300,4 +300,35 @@ class TokenService {
             );
         }
     }
+
+    /**
+     * Persist an attempt to refresh a token.
+     *
+     * @param string      $businessId
+     * @param string      $type     'app' or 'merchant'
+     * @param bool        $success
+     * @param string|null $message
+     * @return void
+     */
+    public function logRefreshAttempt(string $businessId, string $type, bool $success, ?string $message = null): void
+    {
+        $sql = <<<SQL
+        INSERT INTO token_refresh_log (business_id, token_type, attempted_at, success, message)
+        VALUES (:biz, :type, NOW(), :success, :message)
+        SQL;
+
+        try {
+            $stmt = $this->context->getConn()->prepare($sql);
+            $stmt->execute([
+                'biz'     => $businessId,
+                'type'    => $type,
+                'success' => $success,
+                'message' => $message,
+            ]);
+        } catch (\Exception $e) {
+            $this->context->getLog()->error(
+                "Failed to log token refresh attempt for business_id={$businessId}: " . $e->getMessage()
+            );
+        }
+    }
 }
