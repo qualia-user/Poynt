@@ -11,22 +11,21 @@ use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\PoyntOAuthHandler;
 use App\Services\MerchantService;
 use App\Services\SubscriptionService;
+use Doctrine\DBAL\Connection;
 use Firebase\JWT\JWT;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
+use Monolog\Logger;
 use Ramsey\Uuid\Uuid;
 
 class OAuthController extends Controller {
 
-    private MerchantService $businessService;
-    private StoreService    $storeService;
-    private TokenService    $tokenService;
-    private Context         $context;
+    private Context $context;
 
 
-    public function __construct($api, $conn, $log) {
+    public function __construct(Api $api, Connection $conn, Logger $log) {
         parent::__construct($api, $conn, $log);
         $this->context = new Context($api, $conn, $log);
 
@@ -55,7 +54,7 @@ class OAuthController extends Controller {
      * Handles the "install" route.
      * Redirects the merchant to the OAuth authorization URL.
      */
-    public function install($platform)
+    public function install(?string $platform): array
     {
         if (!$platform) {
             return ['error' => 'Platform not specified.'];
@@ -81,7 +80,7 @@ class OAuthController extends Controller {
      * @return void
      * @throws \Exception
      */
-    public function callback()
+    public function callback(): void
     {
         $poyntOAuthHandler = new PoyntOAuthHandler($this->context);
 

@@ -9,9 +9,9 @@ use GuzzleHttp\Client;
 //class CloverOAuthHandler implements OAuthHandlerInterface
 class CloverOAuthHandler
 {
-    private $client;
-    private $clientId;
-    private $clientSecret;
+    private Client $client;
+    private string $clientId;
+    private string $clientSecret;
 
     public function __construct() {
         $this->client = new Client();

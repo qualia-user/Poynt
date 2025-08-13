@@ -2,25 +2,26 @@
 
 namespace App\Services;
 
-use GuzzleHttp\Client;
 use App\Config\ConfigApp;
+use App\Core\Context;
+use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use PDO;
 
 class WebhookService
 {
-    protected $context;
-    private $businessId;
+    protected Context $context;
+    private ?string $businessId;
 
     public const POYNT_WEBHOOK_URL = 'https://services.poynt.net/hooks';
 
-        /**
+    /**
      * Constructor.
      *
-     * @param object $context An object containing dependencies (like logger, config, etc.)
+     * @param Context $context An object containing dependencies (like logger, config, etc.)
      */
-    public function __construct($context, $businessId = null)
+    public function __construct(Context $context, ?string $businessId = null)
     {
         $this->context = $context;
         $this->businessId = $businessId;

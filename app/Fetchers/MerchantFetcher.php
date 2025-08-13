@@ -9,8 +9,8 @@ use Psr\Log\LoggerInterface;
 
 class MerchantFetcher
 {
-    private $httpClient;
-    private $log;
+    private Client $httpClient;
+    private LoggerInterface $log;
 
     const POYNT_ENDPOINT_API = 'https://services.poynt.net/businesses';
     const POYNT_ENDPOINT_GET_BUSINESS = 'https://services.poynt.net/businesses';
