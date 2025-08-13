@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use AllowDynamicProperties;
 use App\Core\Context;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception;
@@ -19,6 +18,9 @@ class MerchantService {
     private ?string $businessId = null;
     private Connection $conn;
     private Logger $log;
+    private ?Client $httpClient = null;
+    private ?\PDO $db = null;
+    private ?\PDO $pdo = null;
 
     const POYNT_ENDPOINT_API_BUSINESS = 'https://services.poynt.net/businesses';
 
@@ -27,6 +29,7 @@ class MerchantService {
         $this->context = $context;
         $this->conn = $context->getConn();
         $this->log = $context->getLog();
+        $this->httpClient = new Client();
         if ($businessId !== null) {
             $this->businessId = $businessId;
         }

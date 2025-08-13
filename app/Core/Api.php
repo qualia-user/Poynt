@@ -1,14 +1,13 @@
 <?php
 namespace App\Core;
 
-use AllowDynamicProperties;
 use Psr\Log\LoggerInterface;
 use App\Core\Response;
 
-#[AllowDynamicProperties] class Api
+class Api
 {
 
-    private static $log;
+    private static ?LoggerInterface $log = null;
 
     /**
      * @var string
@@ -18,37 +17,37 @@ use App\Core\Response;
     /**
      * @var string
      */
-    protected mixed $method;
+    protected string $method = '';
 
     /**
-     * @var string|null
+     * @var string
      */
-    protected mixed $endpoint;
+    protected string $endpoint = 'default';
 
     /**
-     * @var mixed
+     * @var string
      */
-    protected mixed $clientIp;
+    protected string $clientIp = '';
 
     /**
-     * @var mixed|string
+     * @var string
      */
-    protected mixed $requestUri;
-
-    /**
-     * @var array
-     */
-    protected array $request;
+    protected string $requestUri = '';
 
     /**
      * @var array|mixed|object
      */
-    public array $data;
+    public array $data = [];
 
     /**
      * @var array|array[]|\false[][]
      */
-    protected array $files;
+    protected array $files = [];
+
+    /**
+     * @var array
+     */
+    public array $get = [];
 
 
     public function __construct($request, $log = null, string $requestId = '')
@@ -119,74 +118,6 @@ use App\Core\Response;
         // Ensure data is an array (to prevent null assignment)
         $this->data = is_array($this->data) ? $this->data : [];
     }
-
-
-    public function __construct_1($request, $log = null, string $requestId = '')
-    {
-        // Assign log if provided
-        if (isset($log)) {
-            self::$log = $log;
-        }
-
-        $this->requestId = $requestId;
-
-        // Determine HTTP method
-        $this->method = $_SERVER['REQUEST_METHOD'];
-
-        // Handle custom HTTP methods
-        if ($this->method === 'POST' && isset($_SERVER['HTTP_X_HTTP_METHOD'])) {
-            $this->method = match ($_SERVER['HTTP_X_HTTP_METHOD']) {
-                'DELETE' => 'DELETE',
-                'PUT' => 'PUT',
-                default => self::response(Response::STATUS_METHOD_NOT_ALLOWED),
-            };
-        }
-
-        // Parse request and set endpoint
-        if (!empty($request)) {
-            $args = explode('/', rtrim($request, '/'));
-            $this->endpoint = array_shift($args);
-
-            if (!empty($args[0]) && !is_numeric($args[0])) {
-                $this->endpoint .= '-' . array_shift($args);
-            }
-        } else {
-            $this->endpoint = 'default'; // Fallback endpoint if $request is empty
-        }
-
-        // Set client IP and request URI
-        $this->clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
-        $this->requestUri = $_SERVER['REQUEST_URI'] ?? '';
-
-        // Retrieve raw input data
-        $inputData = file_get_contents('php://input');
-        if (!empty($_SERVER['HTTP_CONTENT_ENCODING']) && $_SERVER['HTTP_CONTENT_ENCODING'] === 'gzip') {
-            $inputData = gzdecode($inputData) ?: '';
-        }
-
-        // Decode JSON input data
-        $jsonData = json_decode($inputData, true) ?? [];
-
-        // Merge all input sources
-        $this->data = array_merge(
-            $_GET ?? [],
-            $_POST ?? [],
-            $jsonData
-        );
-
-        // Process uploaded files
-        if (!empty($_FILES)) {
-            $this->files = array_map(function ($file) {
-                return array_map(function ($value) {
-                    return is_array($value) ? reset($value) : $value;
-                }, $file);
-            }, $_FILES);
-        }
-
-        // Ensure data is an array (to prevent null assignment)
-        $this->data = is_array($this->data) ? $this->data : [];
-    }
-
     /**
      * @param $status
      * @param $response
