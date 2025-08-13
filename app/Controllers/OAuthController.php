@@ -3,7 +3,6 @@
 namespace App\Controllers;
 
 use App\Config\ConfigApp;
-use App\Core\Api;
 use App\Core\Context;
 use App\Core\Response;
 use App\Fetchers\MerchantFetcher;
@@ -11,23 +10,16 @@ use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\PoyntOAuthHandler;
 use App\Services\MerchantService;
 use App\Services\SubscriptionService;
-use Doctrine\DBAL\Connection;
 use Firebase\JWT\JWT;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
-use Monolog\Logger;
 use Ramsey\Uuid\Uuid;
 
 class OAuthController extends Controller {
-
-    private Context $context;
-
-
-    public function __construct(Api $api, Connection $conn, Logger $log) {
-        parent::__construct($api, $conn, $log);
-        $this->context = new Context($api, $conn, $log);
+    public function __construct(Context $context) {
+        parent::__construct($context);
 
         // TODO if we would like to keep one app for all providers
         #$this->platformRegistry = new PlatformRegistry($this->context);
@@ -131,17 +123,17 @@ class OAuthController extends Controller {
 
             if ($success) {
                 $this->log->info("Merchant data saved successfully.");
-                Api::response(Response::STATUS_OK, ['message' => 'Merchant data saved successfully.']);
+                \App\Core\Api::response(Response::STATUS_OK, ['message' => 'Merchant data saved successfully.']);
             } else {
                 $this->log->error("Failed to save merchant data.");
-                Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Failed to save merchant data.']);
+                \App\Core\Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => 'Failed to save merchant data.']);
             }
         } catch (GuzzleException $e) {
             $this->log->error("HTTP request error during callback: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => $e->getMessage()]);
+            \App\Core\Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => $e->getMessage()]);
         } catch (\Exception $e) {
             $this->log->error("Error during callback: " . $e->getMessage());
-            Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => $e->getMessage()]);
+            \App\Core\Api::response(Response::STATUS_INTERNAL_SERVER_ERROR, ['error' => $e->getMessage()]);
         }
 
         exit;
