@@ -5,7 +5,7 @@ namespace App\Modules\OAuth;
 use App\Core\Context;
 
 class PlatformRegistry {
-    private $context;
+    private Context $context;
 
     public function __construct(Context $context) {
         $this->context = $context;

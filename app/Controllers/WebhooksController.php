@@ -5,11 +5,13 @@ namespace App\Controllers;
 use App\Core\Api;
 use App\Core\Context;
 use App\Core\Response;
+use Doctrine\DBAL\Connection;
+use Monolog\Logger;
 
 class WebhooksController extends Controller
 {
-    private $context;
-    public function __construct($api, $conn, $log)
+    private Context $context;
+    public function __construct(Api $api, Connection $conn, Logger $log)
     {
         parent::__construct($api, $conn, $log);
         $this->context = new Context($api, $conn, $log);
