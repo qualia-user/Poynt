@@ -10,6 +10,7 @@ use League\Container\Container;
 use Monolog\Logger;
 use Phroute\Phroute\Dispatcher;
 use App\Core\Api;
+use App\Core\Context;
 use App\Core\RouterResolver;
 use App\Core\Response;
 use Doctrine\DBAL\DriverManager;
@@ -71,17 +72,16 @@ $log->pushProcessor(function ($record) use ($requestId) {
 });
 
 $api = new Api($_REQUEST['request'] ?? '', $log, $requestId);
+$context = new Context($api, $conn, $log);
 
 // Dependency injection container
 $appContainer = new Container();
-$appContainer->add('CONN', $conn);
-$appContainer->add('LOG', $log);
-$appContainer->add('API', $api);
+$appContainer->add('CONTEXT', $context);
 
 // Register controllers
-$appContainer->add('App\Controllers\OAuthController')->addArgument('API')->addArgument('CONN')->addArgument('LOG');
-$appContainer->add('App\Controllers\TokenController')->addArgument('API')->addArgument('CONN')->addArgument('LOG');
-$appContainer->add('App\Controllers\WebhooksController')->addArgument('API')->addArgument('CONN')->addArgument('LOG');
+$appContainer->add('App\Controllers\OAuthController')->addArgument('CONTEXT');
+$appContainer->add('App\Controllers\TokenController')->addArgument('CONTEXT');
+$appContainer->add('App\Controllers\WebhooksController')->addArgument('CONTEXT');
 
 $resolver = new RouterResolver($appContainer);
 
