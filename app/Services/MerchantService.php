@@ -248,11 +248,36 @@ class MerchantService {
             ]);
 
             $data = json_decode($response->getBody(), true);
+
+            // Persist terminals for each store if present
+            if (is_array($data)) {
+                $terminalService = new TerminalService($this->context);
+                foreach ($data as $store) {
+                    $devices = $store['storeDevices'] ?? [];
+                    $storeId = $store['id'] ?? null;
+                    if ($storeId && !empty($devices)) {
+                        $terminalService->upsertTerminals($devices, $storeId);
+                    }
+                }
+            }
+
             return $data ?? []; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
             $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
             return [];
         }
+    }
+
+    /**
+     * Fetch terminals already stored for a given store.
+     *
+     * @param string $storeId
+     * @return array
+     */
+    public function fetchStoreTerminals(string $storeId): array
+    {
+        $terminalService = new TerminalService($this->context);
+        return $terminalService->fetchByStoreId($storeId);
     }
 
     /**
