@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Core\Api;
 use App\Core\Context;
 use App\Core\Response;
+use PDO;
 
 class WebhooksController extends Controller
 {
@@ -34,29 +35,64 @@ class WebhooksController extends Controller
         // Determine the event type from the payload.
         $eventType = $payload['eventType'] ?? null;
 
-        // Route to the appropriate handler based on event type.
-        switch ($eventType) {
-            case 'CATALOG_CREATED':
-            case 'CATALOG_UPDATED':
-            case 'CATALOG_DELETED':
+        // Insert audit record with default processed=false
+        $headers = getallheaders();
+        $conn = $this->context->getConn();
+        $conn->insert('webhook_audit', [
+            'event_type' => $eventType,
+            'payload' => json_encode($payload),
+            'headers' => json_encode($headers),
+            'processed' => false,
+        ], [
+            'processed' => PDO::PARAM_BOOL,
+        ]);
 
-                Api::response(Response::STATUS_OK, null, true);
-                break;
+        $auditId = $conn->lastInsertId();
+        $responseStatus = Response::STATUS_OK;
+        $responseBody = ['status' => 'ok'];
+        $errorMessage = null;
 
-            case 'APPLICATION_SUBSCRIPTION_START':
-                $this->handleSubscriptionStart($payload);
-                break;
+        try {
+            // Route to the appropriate handler based on event type.
+            switch ($eventType) {
+                case 'CATALOG_CREATED':
+                case 'CATALOG_UPDATED':
+                case 'CATALOG_DELETED':
+                    $responseBody = null;
+                    break;
 
-            case 'APPLICATION_SUBSCRIPTION_END':
-                $this->handleSubscriptionEnd($payload);
-                break;
+                case 'APPLICATION_SUBSCRIPTION_START':
+                    $this->handleSubscriptionStart($payload);
+                    break;
 
-            default:
-                Api::response(Response::STATUS_BAD_REQUEST, ['error' => 'Unrecognized event']);
+                case 'APPLICATION_SUBSCRIPTION_END':
+                    $this->handleSubscriptionEnd($payload);
+                    break;
+
+                default:
+                    $responseStatus = Response::STATUS_BAD_REQUEST;
+                    $responseBody = ['error' => 'Unrecognized event'];
+                    $errorMessage = 'Unrecognized event';
+                    break;
+            }
+        } catch (\Throwable $e) {
+            $responseStatus = Response::STATUS_INTERNAL_SERVER_ERROR;
+            $responseBody = ['error' => 'Processing error'];
+            $errorMessage = $e->getMessage();
         }
 
+        // Update audit record after processing
+        $conn->update('webhook_audit', [
+            'processed' => true,
+            'error_message' => $errorMessage,
+        ], [
+            'id' => $auditId,
+        ], [
+            'processed' => PDO::PARAM_BOOL,
+        ]);
+
         // Respond to acknowledge the event has been processed.
-        Api::response(Response::STATUS_OK, ['status' => 'ok']);
+        Api::response($responseStatus, $responseBody);
     }
 
     /**
