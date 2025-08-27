@@ -102,7 +102,7 @@ class TokenService {
             return $row === false ? null : $row['access_token'];
         } catch (\Exception $e) {
             throw new \RuntimeException(
-                "Failed to fetch merchant token for business_id={$businessId}: " . $e->getMessage(),
+                "Failed to fetch app token for business_id={$businessId}: " . $e->getMessage(),
                 (int)$e->getCode(),
                 $e
             );
