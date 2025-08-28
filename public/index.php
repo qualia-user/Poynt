@@ -68,6 +68,7 @@ $context = new Context($api, $conn, $log);
 // Dependency injection container
 $appContainer = new Container();
 $appContainer->add('CONTEXT', $context);
+$appContainer->add('App\Services\ServiceFactory')->addArgument('CONTEXT');
 
 // Register controllers
 $appContainer->add('App\Controllers\OAuthController')->addArgument('CONTEXT');
