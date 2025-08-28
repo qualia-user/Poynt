@@ -51,16 +51,7 @@ try {
 }
 
 // Logger setup
-$pdo = new \PDO(
-    'pgsql:host=' . ConfigDatabase::$host . ';port=' . ConfigDatabase::$port . ';dbname=' . ConfigDatabase::$database,
-    ConfigDatabase::$username,
-    ConfigDatabase::$password,
-    [
-        \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
-        \PDO::ATTR_EMULATE_PREPARES => false,
-    ]
-);
-$logHandler = new CustomPDOHandler($pdo);
+$logHandler = new CustomPDOHandler($conn);
 $log = new Logger('app-poynt-log');
 $log->pushHandler($logHandler);
 
