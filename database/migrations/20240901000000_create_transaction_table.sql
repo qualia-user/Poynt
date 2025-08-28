@@ -1,8 +1,0 @@
-CREATE TABLE IF NOT EXISTS transaction (
-    id SERIAL PRIMARY KEY,
-    transaction_id VARCHAR(255) UNIQUE NOT NULL,
-    business_id VARCHAR(255) NOT NULL,
-    metadata JSON NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
