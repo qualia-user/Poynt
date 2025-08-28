@@ -2,7 +2,12 @@ CREATE TABLE IF NOT EXISTS "order" (
     order_id VARCHAR(255) PRIMARY KEY,
     business_id VARCHAR(255) NOT NULL,
     store_id VARCHAR(255),
-    metadata JSONB NOT NULL,
+    status VARCHAR(255),
+    is_tax_inclusive BOOLEAN,
+    customer_json JSONB,
+    transactions_json JSONB,
+    totals_json JSONB,
+    taxes_json JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -11,7 +16,10 @@ CREATE TABLE IF NOT EXISTS order_item (
     order_item_id VARCHAR(255) PRIMARY KEY,
     order_id VARCHAR(255) NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
     name VARCHAR(255),
-    metadata JSONB NOT NULL,
+    quantity INTEGER,
+    price_amount INTEGER,
+    taxes_json JSONB,
+    payload JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -20,7 +28,7 @@ CREATE TABLE IF NOT EXISTS order_history (
     order_history_id VARCHAR(255) PRIMARY KEY,
     order_id VARCHAR(255) NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
     status VARCHAR(255),
-    metadata JSONB NOT NULL,
+    payload JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -28,7 +36,9 @@ CREATE TABLE IF NOT EXISTS order_history (
 CREATE TABLE IF NOT EXISTS order_shipment (
     order_shipment_id VARCHAR(255) PRIMARY KEY,
     order_id VARCHAR(255) NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
-    metadata JSONB NOT NULL,
+    status VARCHAR(255),
+    taxes_json JSONB,
+    payload JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
