@@ -18,23 +18,6 @@ class OAuthController extends Controller {
         $this->callbackService = new CallbackService($this->context, $this->platformRegistry);
     }
 
-//    public function handleCallback(array $request): array {
-//        $platform = $request['platform'];
-//        $authCode = $request['code'];
-//
-//        $handler = $this->platformRegistry->getHandler(ConfigApp::$platform);
-//        $tokens = $handler->exchangeAuthorizationCode($authCode);
-//        $merchantData = $handler->fetchMerchantDetails($tokens['access_token']);
-//
-//        $merchantId = $this->merchantService->saveMerchantData($merchantData, $platform, $tokens);
-//
-//        return [
-//            'message' => 'Installation successful',
-//            'merchant_id' => $merchantId,
-//            'platform' => $platform,
-//        ];
-//    }
-
     /**
      * Handles the "install" route.
      * Redirects the merchant to the OAuth authorization URL.
