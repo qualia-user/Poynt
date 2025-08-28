@@ -28,13 +28,7 @@ $conn = DriverManager::getConnection($connectionParams);
 $conn->executeStatement("SET TIME ZONE '" . ConfigApp::$timezone . "'");
 
 // Logger setup
-$pdo = new \PDO(
-    'pgsql:host=' . ConfigDatabase::$host . ';port=' . ConfigDatabase::$port . ';dbname=' . ConfigDatabase::$database,
-    ConfigDatabase::$username,
-    ConfigDatabase::$password,
-    [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]
-);
-$logHandler = new CustomPDOHandler($pdo);
+$logHandler = new CustomPDOHandler($conn);
 $log = new Logger('app-poynt-log');
 $log->pushHandler($logHandler);
 $requestId = Uuid::uuid4()->toString();
