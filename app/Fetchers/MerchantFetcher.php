@@ -6,6 +6,7 @@ use Doctrine\DBAL\Driver\IBMDB2\Result;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use App\Core\Context;
+use App\Services\OrderService;
 
 class MerchantFetcher
 {
@@ -124,6 +125,19 @@ class MerchantFetcher
             ]);
 
             $data = json_decode($response->getBody(), true);
+
+            if (is_array($data)) {
+                $orders = $data['orders'] ?? $data['content'] ?? $data;
+                if (is_array($orders)) {
+                    $orderService = new OrderService($this->context);
+                    foreach ($orders as $order) {
+                        if (is_array($order)) {
+                            $orderService->upsert($order);
+                        }
+                    }
+                }
+            }
+
             return $data ?? null; // Assuming 'business' contains the merchant details
         } catch (GuzzleException $e) {
             $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
