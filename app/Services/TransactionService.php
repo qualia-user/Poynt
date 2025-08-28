@@ -3,14 +3,20 @@
 namespace App\Services;
 
 use App\Core\Context;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 
 class TransactionService
 {
+    private const POYNT_ENDPOINT = 'https://services.poynt.net/businesses';
+
     private Context $context;
+    private Client $httpClient;
 
     public function __construct(Context $context)
     {
         $this->context = $context;
+        $this->httpClient = new Client();
     }
 
     /**
@@ -43,69 +49,102 @@ class TransactionService
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
+        $amounts = $transactionData['amounts'] ?? [];
+        $transactionAmount = $amounts['transactionAmount']['amount'] ?? null;
+        $tipAmount = $amounts['tipAmount']['amount'] ?? null;
+        $cashbackAmount = $amounts['cashbackAmount']['amount'] ?? null;
+        $currency = $amounts['transactionAmount']['currency'] ?? null;
+
+        $card = $transactionData['fundingSource']['card'] ?? [];
+        $cardBrand = $card['brand'] ?? null;
+        $cardLast4 = $card['numberLast4'] ?? ($card['lastFourDigits'] ?? null);
+        $cardHolder = $card['cardHolderName'] ?? null;
+        $cardExpMonth = $card['expirationMonth'] ?? null;
+        $cardExpYear = $card['expirationYear'] ?? null;
+
+        $processor = $transactionData['processor'] ?? [];
+        $processorName = $processor['name'] ?? null;
+        $processorStatus = $processor['status'] ?? ($transactionData['processorResponse']['status'] ?? null);
+        $processorTransactionId = $processor['transactionId'] ?? ($transactionData['processorResponse']['transactionId'] ?? null);
+        $processorAuthCode = $processor['authCode'] ?? ($transactionData['processorResponse']['authorizationCode'] ?? null);
+
         try {
-            $existing = $this->context->getConn()->fetchAssociative(
-                'SELECT transaction_id FROM transaction WHERE transaction_id = ?',
-                [$transactionId]
+            $this->context->getConn()->executeStatement(
+                'INSERT INTO transaction (
+                    transaction_id, business_id, amount, tip_amount, cashback_amount, currency,
+                    card_brand, card_last4, card_holder, card_exp_month, card_exp_year,
+                    processor, processor_status, processor_transaction_id, processor_auth_code,
+                    metadata, created_at, updated_at
+                ) VALUES (
+                    :transactionId, :businessId, :amount, :tipAmount, :cashbackAmount, :currency,
+                    :cardBrand, :cardLast4, :cardHolder, :cardExpMonth, :cardExpYear,
+                    :processor, :processorStatus, :processorTransactionId, :processorAuthCode,
+                    :metadata, :createdAt, :updatedAt
+                ) ON CONFLICT (transaction_id) DO UPDATE SET
+                    business_id = EXCLUDED.business_id,
+                    amount = EXCLUDED.amount,
+                    tip_amount = EXCLUDED.tip_amount,
+                    cashback_amount = EXCLUDED.cashback_amount,
+                    currency = EXCLUDED.currency,
+                    card_brand = EXCLUDED.card_brand,
+                    card_last4 = EXCLUDED.card_last4,
+                    card_holder = EXCLUDED.card_holder,
+                    card_exp_month = EXCLUDED.card_exp_month,
+                    card_exp_year = EXCLUDED.card_exp_year,
+                    processor = EXCLUDED.processor,
+                    processor_status = EXCLUDED.processor_status,
+                    processor_transaction_id = EXCLUDED.processor_transaction_id,
+                    processor_auth_code = EXCLUDED.processor_auth_code,
+                    metadata = EXCLUDED.metadata,
+                    updated_at = EXCLUDED.updated_at',
+                [
+                    'transactionId' => $transactionId,
+                    'businessId' => $businessId,
+                    'amount' => $transactionAmount,
+                    'tipAmount' => $tipAmount,
+                    'cashbackAmount' => $cashbackAmount,
+                    'currency' => $currency,
+                    'cardBrand' => $cardBrand,
+                    'cardLast4' => $cardLast4,
+                    'cardHolder' => $cardHolder,
+                    'cardExpMonth' => $cardExpMonth,
+                    'cardExpYear' => $cardExpYear,
+                    'processor' => $processorName,
+                    'processorStatus' => $processorStatus,
+                    'processorTransactionId' => $processorTransactionId,
+                    'processorAuthCode' => $processorAuthCode,
+                    'metadata' => $metadata,
+                    'createdAt' => $now,
+                    'updatedAt' => $now,
+                ]
             );
 
-            if ($existing) {
-                $this->context->getConn()->update(
-                    'transaction',
-                    [
-                        'business_id' => $businessId,
-                        'metadata' => $metadata,
-                        'updated_at' => $now,
-                    ],
-                    ['transaction_id' => $transactionId]
-                );
-            } else {
-                $this->context->getConn()->insert(
-                    'transaction',
-                    [
-                        'transaction_id' => $transactionId,
-                        'business_id' => $businessId,
-                        'metadata' => $metadata,
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ]
-                );
-            }
-
             if ($receiptData !== null) {
-                $receiptJson = json_encode($receiptData);
-                if ($receiptJson === false) {
+                $receiptHtml = $receiptData['html'] ?? null;
+                $receiptPayload = $receiptData['payload'] ?? null;
+                $payloadJson = $receiptPayload !== null ? json_encode($receiptPayload) : null;
+                if ($payloadJson === false) {
                     $this->context->getLog()->error(
-                        "TransactionService::upsert: failed to encode receipt for transaction_id={$transactionId}"
+                        "TransactionService::upsert: failed to encode receipt payload for transaction_id={$transactionId}"
                     );
                     return false;
                 }
 
-                $receiptExisting = $this->context->getConn()->fetchAssociative(
-                    'SELECT transaction_id FROM transaction_receipt WHERE transaction_id = ?',
-                    [$transactionId]
+                $this->context->getConn()->executeStatement(
+                    'INSERT INTO transaction_receipt (transaction_id, html, payload, created_at, updated_at)
+                     VALUES (:transactionId, :html, :payload, :createdAt, :updatedAt)
+                     ON CONFLICT (transaction_id) DO UPDATE SET
+                        html = EXCLUDED.html,
+                        payload = EXCLUDED.payload,
+                        updated_at = EXCLUDED.updated_at',
+                    [
+                        'transactionId' => $transactionId,
+                        'html' => $receiptHtml,
+                        'payload' => $payloadJson,
+                        'createdAt' => $now,
+                        'updatedAt' => $now,
+                    ]
                 );
-
-                if ($receiptExisting) {
-                    $this->context->getConn()->update(
-                        'transaction_receipt',
-                        [
-                            'data' => $receiptJson,
-                            'updated_at' => $now,
-                        ],
-                        ['transaction_id' => $transactionId]
-                    );
-                } else {
-                    $this->context->getConn()->insert(
-                        'transaction_receipt',
-                        [
-                            'transaction_id' => $transactionId,
-                            'data' => $receiptJson,
-                            'created_at' => $now,
-                            'updated_at' => $now,
-                        ]
-                    );
-                }
             }
 
             return true;
@@ -113,6 +152,35 @@ class TransactionService
             $this->context->getLog()->error(
                 'TransactionService::upsert: database error: ' . $e->getMessage()
             );
+            return false;
+        }
+    }
+
+    /**
+     * Fetch transactions for a business and store them.
+     */
+    public function fetchAndStore(string $accessToken, string $businessId): bool
+    {
+        try {
+            $url = self::POYNT_ENDPOINT . '/' . $businessId . '/transactions';
+            $response = $this->httpClient->get($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $data = json_decode($response->getBody(), true);
+            if (!$data || !isset($data['transactions'])) {
+                return false;
+            }
+
+            foreach ($data['transactions'] as $transaction) {
+                $this->upsert($transaction, $transaction['receipt'] ?? null);
+            }
+
+            return true;
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error('TransactionService::fetchAndStore: ' . $e->getMessage());
             return false;
         }
     }
