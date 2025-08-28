@@ -45,12 +45,12 @@ class CallbackService
         $merchantToken = $tokenResponse['data']['merchantAccessToken'] ?? [];
         $handler->storeTokens($appToken, $merchantToken);
 
-        $merchantService = new MerchantService($this->context, $handler->getBusinessId());
-        if (!$merchantService->merchantExists()) {
-            $stores = $merchantService->fetchBusinessStores();
-            $merchantService->upsertStores($stores);
-            if ($merchant = $merchantService->fetchMerchantBusinessById($handler->getBusinessId())) {
-                $merchantService->upsert($merchant);
+        $businessService = new BusinessService($this->context, $handler->getBusinessId());
+        if (!$businessService->businessExists()) {
+            $stores = $businessService->fetchBusinessStores();
+            $businessService->upsertStores($stores);
+            if ($business = $businessService->fetchBusinessById($handler->getBusinessId())) {
+                $businessService->upsert($business);
             }
         }
 

@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use League\Container\Container;
 use Ramsey\Uuid\Uuid;
 
-class MerchantService {
+class BusinessService {
 
     private Context $context;
     private ?string $businessId = null;
@@ -29,36 +29,36 @@ class MerchantService {
     }
 
     /**
-     * Insert a new merchant row or update the existing one, based on business_id.
+     * Insert a new business row or update the existing one, based on business_id.
      *
-     * @param array $merchantData  Associated array with keys such as:
+     * @param array $businessData  Associated array with keys such as:
      *                             - 'businessId' (string),
      *                             - 'storeId'    (string),
      *                             - 'name'       (string),
      *
      * @return bool  True on success, false on failure.
      */
-    public function upsert(array $merchantData): bool
+    public function upsert(array $businessData): bool
     {
         // 1) Validate required keys
-        if (!isset($merchantData['id'], $merchantData['legalName'])) {
+        if (!isset($businessData['id'], $businessData['legalName'])) {
             $this->context->getLog()->error(
-                'MerchantService::upsert: missing required merchantData fields (id or legalName)'
+                'BusinessService::upsert: missing required businessData fields (id or legalName)'
             );
             return false;
         }
 
-        $businessId = $merchantData['id'];
-        $name = $merchantData['legalName'];
+        $businessId = $businessData['id'];
+        $name = $businessData['legalName'];
 
         // 1.a) Decide on "active". If the payload does not include it, default to true.
-        $active = !isset($merchantData['active']) || (bool)$merchantData['active'];
+        $active = !isset($businessData['active']) || (bool)$businessData['active'];
 
         // 2) Prepare the full payload as JSON for the metadata column
-        $metadata = json_encode($merchantData);
+        $metadata = json_encode($businessData);
         if ($metadata === false) {
             $this->context->getLog()->error(
-                "MerchantService::upsert: failed to json_encode merchantData for business_id={$businessId}"
+                "BusinessService::upsert: failed to json_encode businessData for business_id={$businessId}"
             );
             return false;
         }
@@ -86,7 +86,7 @@ class MerchantService {
                     ['business_id' => $businessId]
                 );
 
-                $this->context->getLog()->info("MerchantService::upsert: updated business {$businessId}");
+                $this->context->getLog()->info("BusinessService::upsert: updated business {$businessId}");
             } else {
                 // 5b) INSERT path (include 'active' here, too)
                 $this->context->getConn()->insert(
@@ -101,13 +101,13 @@ class MerchantService {
                     ]
                 );
 
-                $this->context->getLog()->info("MerchantService::upsert: inserted new business {$businessId}");
+                $this->context->getLog()->info("BusinessService::upsert: inserted new business {$businessId}");
             }
 
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
-                "MerchantService::upsert: database error for business_id={$businessId}: "
+                "BusinessService::upsert: database error for business_id={$businessId}: "
                 . $e->getMessage()
             );
             return false;
@@ -115,12 +115,12 @@ class MerchantService {
     }
 
     /**
-     * Fetch and save merchant business.
+     * Fetch and save business details.
      *
      * @param string $businessId
      * @return array|false Success(array) or failure(bool).
      */
-    public function fetchMerchantBusinessById(string $businessId): array|false
+    public function fetchBusinessById(string $businessId): array|false
     {
         $tokenService = new TokenService($this->context);
         $accessToken = $tokenService->getMerchantToken($businessId);
@@ -137,21 +137,21 @@ class MerchantService {
             ]);
 
             $data = json_decode($response->getBody(), true);
-            return $data ?? false; // Assuming 'business' contains the merchant details
+            return $data ?? false; // Assuming 'business' contains the business details
         } catch (GuzzleException $e) {
-            $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching business details: " . $e->getMessage());
             return false;
         }
     }
 
     /**
-     * Convenience wrapper that fetches merchant business details using the
+     * Convenience wrapper that fetches business details using the
      * internally stored business identifier or the one supplied.
      *
      * @param string|null $businessId Optional business identifier
-     * @return array|false Merchant data on success, false on failure
+     * @return array|false Business data on success, false on failure
      */
-    public function fetchMerchantBusiness(?string $businessId = null): array|false
+    public function fetchBusiness(?string $businessId = null): array|false
     {
         if ($businessId === null) {
             $businessId = $this->businessId;
@@ -161,16 +161,16 @@ class MerchantService {
             return false;
         }
 
-        return $this->fetchMerchantBusinessById($businessId);
+        return $this->fetchBusinessById($businessId);
     }
 
     /**
-     * Retrieve orders belonging to a merchant business.
+     * Retrieve orders belonging to a business.
      *
      * @param string|null $businessId Optional business identifier
      * @return array|false Array of orders or false on error
      */
-    public function fetchMerchantOrders(?string $businessId = null): array|false
+    public function fetchBusinessOrders(?string $businessId = null): array|false
     {
         if ($businessId === null) {
             $businessId = $this->businessId;
@@ -195,7 +195,7 @@ class MerchantService {
             $data = json_decode($response->getBody(), true);
             return $data ?? false;
         } catch (GuzzleException $e) {
-            $this->context->getLog()->error('Error fetching merchant orders: ' . $e->getMessage());
+            $this->context->getLog()->error('Error fetching business orders: ' . $e->getMessage());
             return false;
         }
     }
@@ -204,7 +204,7 @@ class MerchantService {
      * @param string|null $businessId
      * @return bool
      */
-    public function merchantExists(?string $businessId = null): bool
+    public function businessExists(?string $businessId = null): bool
     {
         if (is_null($businessId)) {
             $businessId = $this->businessId;
@@ -261,9 +261,9 @@ class MerchantService {
                 }
             }
 
-            return $data ?? []; // Assuming 'business' contains the merchant details
+            return $data ?? []; // Assuming 'business' contains the store details
         } catch (GuzzleException $e) {
-            $this->context->getLog()->error("Error fetching merchant details: " . $e->getMessage());
+            $this->context->getLog()->error("Error fetching business stores: " . $e->getMessage());
             return [];
         }
     }
@@ -311,7 +311,7 @@ class MerchantService {
                     !isset($store['id'], $store['businessId'], $store['displayName'])
                 ) {
                     $this->context->getLog()->error(
-                        'MerchantService::insertStores: missing required store fields '
+                        'BusinessService::insertStores: missing required store fields '
                         . '(id, businessId, or displayName)'
                     );
                     return false;
@@ -324,7 +324,7 @@ class MerchantService {
                 $metadata = json_encode($store);
                 if ($metadata === false) {
                     $this->context->getLog()->error(
-                        "MerchantService::insertStores: failed to json_encode store for store_id={$storeId}"
+                        "BusinessService::insertStores: failed to json_encode store for store_id={$storeId}"
                     );
                     return false;
                 }
@@ -342,7 +342,7 @@ class MerchantService {
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
-                "MerchantService::insertStores: database error while inserting/updating stores: "
+                "BusinessService::insertStores: database error while inserting/updating stores: "
                 . $e->getMessage()
             );
             return false;
