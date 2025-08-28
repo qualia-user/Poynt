@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Core\Api;
 use App\Core\Context;
 use App\Core\Response;
+use App\Services\SubscriptionService;
 use PDO;
 
 class WebhooksController extends Controller
@@ -102,7 +103,16 @@ class WebhooksController extends Controller
      */
     private function handleSubscriptionStart(array $payload)
     {
-        // Todo
+        $subscriptionId = $payload['subscriptionId'] ?? null;
+        $businessId     = $payload['businessId']     ?? null;
+        $storeId        = $payload['storeId']        ?? null;
+
+        if (!$subscriptionId || !$businessId || !$storeId) {
+            throw new \InvalidArgumentException('Missing subscription data');
+        }
+
+        $service = new SubscriptionService($this->context);
+        $service->activateSubscription($subscriptionId, $businessId, $storeId);
     }
 
     /**
@@ -112,7 +122,16 @@ class WebhooksController extends Controller
      */
     private function handleSubscriptionEnd(array $payload)
     {
-        // Todo
+        $subscriptionId = $payload['subscriptionId'] ?? null;
+        $businessId     = $payload['businessId']     ?? null;
+        $storeId        = $payload['storeId']        ?? null;
+
+        if (!$subscriptionId || !$businessId || !$storeId) {
+            throw new \InvalidArgumentException('Missing subscription data');
+        }
+
+        $service = new SubscriptionService($this->context);
+        $service->cancelSubscription($subscriptionId, $businessId, $storeId);
     }
 
 }

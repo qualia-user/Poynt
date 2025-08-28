@@ -544,4 +544,68 @@ class SubscriptionService
         }
     }
 
+    /**
+     * Marks an existing subscription row as active.
+     *
+     * @param string $subscriptionId
+     * @param string $businessId
+     * @param string $storeId
+     * @return void
+     */
+    public function activateSubscription(string $subscriptionId, string $businessId, string $storeId): void
+    {
+        $sql = <<<SQL
+        UPDATE subscription
+           SET status = :status,
+               start_at = COALESCE(start_at, NOW()),
+               updated_at = NOW()
+         WHERE subscription_id = :sub_id
+           AND business_id = :biz
+           AND store_id = :store
+        SQL;
+
+        try {
+            $this->context->getConn()->executeStatement($sql, [
+                'status' => 'active',
+                'sub_id' => $subscriptionId,
+                'biz'    => $businessId,
+                'store'  => $storeId,
+            ]);
+        } catch (Exception $e) {
+            $this->context->getLog()->error('Failed to activate subscription ' . $subscriptionId . ': ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Cancels an existing subscription row.
+     *
+     * @param string $subscriptionId
+     * @param string $businessId
+     * @param string $storeId
+     * @return void
+     */
+    public function cancelSubscription(string $subscriptionId, string $businessId, string $storeId): void
+    {
+        $sql = <<<SQL
+        UPDATE subscription
+           SET status = :status,
+               canceled_at = COALESCE(canceled_at, NOW()),
+               updated_at = NOW()
+         WHERE subscription_id = :sub_id
+           AND business_id = :biz
+           AND store_id = :store
+        SQL;
+
+        try {
+            $this->context->getConn()->executeStatement($sql, [
+                'status' => 'canceled',
+                'sub_id' => $subscriptionId,
+                'biz'    => $businessId,
+                'store'  => $storeId,
+            ]);
+        } catch (Exception $e) {
+            $this->context->getLog()->error('Failed to cancel subscription ' . $subscriptionId . ': ' . $e->getMessage());
+        }
+    }
+
 }
