@@ -59,13 +59,20 @@ class TerminalService
                     return false;
                 }
 
-                $stmt->execute([
+                $affected = $stmt->executeStatement([
                     'terminalId' => $terminalId,
                     'storeId'    => $storeId,
                     'metadata'   => $metadata,
                     'createdAt'  => $now,
                     'updatedAt'  => $now,
                 ]);
+
+                if ($affected < 1) {
+                    $this->context->getLog()->error(
+                        "TerminalService::upsertTerminals: failed to upsert terminal_id={$terminalId}"
+                    );
+                    return false;
+                }
             }
 
             return true;
