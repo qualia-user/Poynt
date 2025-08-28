@@ -322,7 +322,7 @@ class BusinessService {
                     return false;
                 }
 
-                $stmt->execute([
+                $stmt->executeStatement([
                     'storeId'    => $storeId,
                     'businessId' => $businessId,
                     'name'       => $name,
