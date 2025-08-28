@@ -59,7 +59,7 @@ class TokenService {
 
         try {
             $stmt = $this->context->getConn()->prepare($sql);
-            $stmt->execute([
+            $stmt->executeStatement([
                 'biz'     => $businessId,
                 'access'  => $token['accessToken'],
                 'refresh' => $token['refreshToken'],
@@ -107,27 +107,6 @@ class TokenService {
                 $e
             );
         }
-
-//        $sql = <<<SQL
-//        SELECT access_token, refresh_token, expires_at
-//          FROM app_token
-//         WHERE business_id = :biz
-//         LIMIT 1
-//        SQL;
-//
-//        try {
-//            $stmt = $this->context->getConn()->prepare($sql);
-//            $stmt->execute(['biz' => $businessId]);
-//            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-//
-//            return $row === false ? null : $row;
-//        } catch (\Exception $e) {
-//            throw new \RuntimeException(
-//                "Failed to fetch app token for business_id={$businessId}: " . $e->getMessage(),
-//                (int)$e->getCode(),
-//                $e
-//            );
-//        }
     }
 
     /**
@@ -150,8 +129,7 @@ class TokenService {
 
         try {
             $stmt = $this->context->getConn()->prepare($sql);
-            $stmt->execute();
-            return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            return $stmt->executeQuery()->fetchAllAssociative();
         } catch (\Exception $e) {
             throw new \RuntimeException(
                 "Failed to query expiring app tokens (next {$minutes} minutes): " . $e->getMessage(),
@@ -196,7 +174,7 @@ class TokenService {
 
         try {
             $stmt = $this->context->getConn()->prepare($sql);
-            $stmt->execute([
+            $stmt->executeStatement([
                 'biz'     => $businessId,
                 'access'  => $token['accessToken'],
                 'refresh' => $token['refreshToken'],
@@ -265,8 +243,7 @@ class TokenService {
 
         try {
             $stmt = $this->context->getConn()->prepare($sql);
-            $stmt->execute();
-            return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            return $stmt->executeQuery()->fetchAllAssociative();
         } catch (\Exception $e) {
             throw new \RuntimeException(
                 "Failed to query expiring merchant tokens (next {$minutes} minutes): " . $e->getMessage(),
@@ -319,7 +296,7 @@ class TokenService {
 
         try {
             $stmt = $this->context->getConn()->prepare($sql);
-            $stmt->execute([
+            $stmt->executeStatement([
                 'biz'     => $businessId,
                 'type'    => $type,
                 'success' => $success,
