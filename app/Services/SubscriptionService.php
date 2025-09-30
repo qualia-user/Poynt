@@ -57,7 +57,15 @@ class SubscriptionService
                 ]
             ]);
             $body = (string) $response->getBody();
-            return json_decode($body, true);
+            $decoded = json_decode($body, true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                $this->context->getLog()->error('Error parsing plans response: ' . json_last_error_msg());
+
+                return null;
+            }
+
+            return $decoded;
         } catch (RequestException $e) {
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()
