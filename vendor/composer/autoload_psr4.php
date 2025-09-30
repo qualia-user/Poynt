@@ -32,4 +32,5 @@ return array(
     'Doctrine\\Common\\Cache\\' => array($vendorDir . '/doctrine/cache/lib/Doctrine/Common/Cache'),
     'Doctrine\\Common\\' => array($vendorDir . '/doctrine/event-manager/src'),
     'Brick\\Math\\' => array($vendorDir . '/brick/math/src'),
+    'App\\\\' => array($baseDir . '/app'),
 );
