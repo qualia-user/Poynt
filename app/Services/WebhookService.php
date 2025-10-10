@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Config\ConfigApp;
 use App\Core\Context;
-use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use PDO;
@@ -13,6 +13,7 @@ class WebhookService
 {
     protected Context $context;
     private ?string $businessId;
+    private ClientInterface $httpClient;
 
     public const POYNT_WEBHOOK_URL = 'https://services.poynt.net/hooks';
 
@@ -21,10 +22,11 @@ class WebhookService
      *
      * @param Context $context An object containing dependencies (like logger, config, etc.)
      */
-    public function __construct(Context $context, ?string $businessId = null)
+    public function __construct(Context $context, ?string $businessId = null, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
         $this->businessId = $businessId;
+        $this->httpClient = $httpClient ?? $context->getHttpClient();
     }
 
     /**
@@ -40,8 +42,6 @@ class WebhookService
      */
     public function registerWebhook(string $merchantAccessToken, array $events): mixed
     {
-        $client = new Client();
-
         // Build the payload
         $payload = [
             'applicationId' => 'urn:aid:' . ConfigApp::$appId,
@@ -51,7 +51,7 @@ class WebhookService
         ];
 
         try {
-            $response = $client->post(self::POYNT_WEBHOOK_URL, [
+            $response = $this->httpClient->post(self::POYNT_WEBHOOK_URL, [
                 'headers' => [
                     'Content-Type'  => 'application/json',
                     'Authorization' => 'Bearer ' . $merchantAccessToken,
