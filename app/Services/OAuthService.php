@@ -5,7 +5,7 @@ namespace App\Services;
 use App\Config\ConfigApp;
 use App\Core\Context;
 use Firebase\JWT\JWT;
-use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use Ramsey\Uuid\Uuid;
@@ -18,10 +18,12 @@ class OAuthService {
     const JWT_EXPIRATION_TIME = 30; // 3600
 
     private Context $context;
+    private ClientInterface $httpClient;
 
-    public function __construct(Context $context)
+    public function __construct(Context $context, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
+        $this->httpClient = $httpClient ?? $context->getHttpClient();
     }
 
 
@@ -62,8 +64,7 @@ class OAuthService {
         // 2. Send token exchange request
         try {
             $responseData = [];
-            $client = new Client();
-            $response = $client->post(self::POYNT_ENDPOINT_TOKEN, [
+            $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
                 'headers' => [
                     'Accept' => 'application/json',
                     'api-version' => '1.2',
@@ -127,8 +128,7 @@ class OAuthService {
 
         // 3. Send POST request to exchange code for Merchant Access Token
         try {
-            $client = new Client();
-            $response = $client->post(self::POYNT_ENDPOINT_TOKEN, [
+            $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
                 'headers' => [
                     'Content-Type'  => 'application/x-www-form-urlencoded',
                     'api-version'   => '1.2',
@@ -167,8 +167,7 @@ class OAuthService {
     public function refreshMerchantToken(string $refreshToken): ?array
     {
         try {
-            $client = new Client();
-            $response = $client->post(self::POYNT_ENDPOINT_TOKEN, [
+            $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
                 'headers' => [
                     'Content-Type' => 'application/x-www-form-urlencoded',
                     'api-version'  => '1.2',

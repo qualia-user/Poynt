@@ -102,8 +102,6 @@ namespace Services {
          */
         private function createServiceWithQueue(array $queue): SubscriptionService
         {
-            $service = new SubscriptionService($this->context);
-
             $mockHandler = new MockHandler($queue);
             $handlerStack = HandlerStack::create($mockHandler);
             $client = new Client([
@@ -111,11 +109,7 @@ namespace Services {
                 'base_uri' => SubscriptionService::POYNT_BILLING_BASE,
             ]);
 
-            $property = new \ReflectionProperty(SubscriptionService::class, 'http');
-            $property->setAccessible(true);
-            $property->setValue($service, $client);
-
-            return $service;
+            return new SubscriptionService($this->context, null, $client);
         }
 
     }

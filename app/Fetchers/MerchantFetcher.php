@@ -3,24 +3,24 @@ namespace App\Fetchers;
 
 use App\Config\ConfigApp;
 use Doctrine\DBAL\Driver\IBMDB2\Result;
-use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use App\Core\Context;
 use App\Services\OrderService;
 
 class MerchantFetcher
 {
-    private Client $httpClient;
+    private ClientInterface $httpClient;
     private Context $context;
 
     const POYNT_ENDPOINT_API = 'https://services.poynt.net/businesses';
     const POYNT_ENDPOINT_GET_BUSINESS = 'https://services.poynt.net/businesses';
     const POYNT_ENDPOINT_GET_ORDERS = 'https://services.poynt.net/businesses';
 
-    public function __construct(Context $context)
+    public function __construct(Context $context, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
-        $this->httpClient = new Client();
+        $this->httpClient = $httpClient ?? $context->getHttpClient();
     }
 
     /**

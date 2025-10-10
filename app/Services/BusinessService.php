@@ -3,19 +3,21 @@
 namespace App\Services;
 
 use App\Core\Context;
-use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
 class BusinessService {
 
     private Context $context;
+    private ClientInterface $httpClient;
     private ?string $businessId = null;
 
     const POYNT_ENDPOINT_API_BUSINESS = 'https://services.poynt.net/businesses';
 
-    public function __construct(Context $context, ?string $businessId = null)
+    public function __construct(Context $context, ?string $businessId = null, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
+        $this->httpClient = $httpClient ?? $context->getHttpClient();
         if ($businessId !== null) {
             $this->businessId = $businessId;
         }
@@ -120,10 +122,8 @@ class BusinessService {
 
         // TODO remove all Guzzle things into separated class?
 
-        $httpClient = new Client();
-
         try {
-            $response = $httpClient->get(self::POYNT_ENDPOINT_API_BUSINESS . '/' . $businessId, [
+            $response = $this->httpClient->get(self::POYNT_ENDPOINT_API_BUSINESS . '/' . $businessId, [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],
@@ -176,10 +176,8 @@ class BusinessService {
         $tokenService = new TokenService($this->context);
         $accessToken  = $tokenService->getMerchantToken($businessId);
 
-        $httpClient = new Client();
-
         try {
-            $response = $httpClient->get(self::POYNT_ENDPOINT_API_BUSINESS . '/' . $businessId . '/orders', [
+            $response = $this->httpClient->get(self::POYNT_ENDPOINT_API_BUSINESS . '/' . $businessId . '/orders', [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],
@@ -231,10 +229,8 @@ class BusinessService {
         $tokenService = new TokenService($this->context);
         $accessToken = $tokenService->getMerchantToken($businessId);
 
-        $httpClient = new Client();
-
         try {
-            $response = $httpClient->get(self::POYNT_ENDPOINT_API_BUSINESS . '/' . $businessId . '/stores', [
+            $response = $this->httpClient->get(self::POYNT_ENDPOINT_API_BUSINESS . '/' . $businessId . '/stores', [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],

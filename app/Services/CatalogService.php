@@ -3,21 +3,21 @@
 namespace App\Services;
 
 use App\Core\Context;
-use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
 class CatalogService
 {
     private Context $context;
-    private Client $httpClient;
+    private ClientInterface $httpClient;
     private ?string $businessId = null;
 
     const POYNT_ENDPOINT = 'https://services.poynt.net/businesses';
 
-    public function __construct(Context $context, ?string $businessId = null)
+    public function __construct(Context $context, ?string $businessId = null, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
-        $this->httpClient = new Client();
+        $this->httpClient = $httpClient ?? $context->getHttpClient();
         if ($businessId !== null) {
             $this->businessId = $businessId;
         }

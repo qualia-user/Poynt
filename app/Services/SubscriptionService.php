@@ -11,7 +11,7 @@ use DateInterval;
 use DateTime;
 use DateTimeZone;
 use Exception;
-use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use JsonException;
@@ -23,20 +23,22 @@ class SubscriptionService
     public const POYNT_BILLING_BASE = 'https://billing.poynt.net/organizations';
     private const DEFAULT_TRIAL_DAYS = 14;
     private Context $context;
-    private Client $http;
+    private ClientInterface $http;
     private mixed $storeId;
 
-    public function __construct(Context $context, $storeId = null)
+    public function __construct(Context $context, $storeId = null, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
-        // A shared Guzzle client for all Poynt HTTP calls
-        $this->http = new Client([
-            'base_uri' => self::POYNT_BILLING_BASE,
-            'timeout'  => 10.0,
-        ]);
+        if ($httpClient !== null) {
+            $this->http = $httpClient;
+        } else {
+            $this->http = $context->getHttpClientFactory()->create([
+                'base_uri' => self::POYNT_BILLING_BASE,
+                'timeout' => 10.0,
+            ]);
+        }
 
-        if (!is_null($storeId))
-        {
+        if (!is_null($storeId)) {
             $this->storeId = $storeId;
         }
     }

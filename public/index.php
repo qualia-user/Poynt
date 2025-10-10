@@ -14,6 +14,7 @@ use App\Core\Context;
 use App\Core\RouterResolver;
 use App\Core\Response;
 use Doctrine\DBAL\DriverManager;
+use App\Http\GuzzleClientFactory;
 use App\Services\CustomPDOHandler;
 use Ramsey\Uuid\Uuid;
 
@@ -63,7 +64,8 @@ $log->pushProcessor(function ($record) use ($requestId) {
 });
 
 $api = new Api($_REQUEST['request'] ?? '', $log, $requestId);
-$context = new Context($api, $conn, $log);
+$httpClientFactory = new GuzzleClientFactory();
+$context = new Context($api, $conn, $log, $httpClientFactory);
 
 // Dependency injection container
 $appContainer = new Container();

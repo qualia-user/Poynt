@@ -7,6 +7,7 @@ use App\Config\ConfigApp;
 use App\Config\ConfigDatabase;
 use App\Core\Api;
 use App\Core\Context;
+use App\Http\GuzzleClientFactory;
 use App\Services\BackgroundJobService;
 use App\Services\CustomPDOHandler;
 use Doctrine\DBAL\DriverManager;
@@ -38,7 +39,8 @@ $log->pushProcessor(function ($record) use ($requestId) {
 });
 
 $api = new Api('', $log, $requestId);
-$context = new Context($api, $conn, $log);
+$httpClientFactory = new GuzzleClientFactory();
+$context = new Context($api, $conn, $log, $httpClientFactory);
 
 $service = new BackgroundJobService($context);
 $service->refreshExpiringTokens();

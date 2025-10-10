@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
-use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
 class TransactionService
@@ -11,12 +11,12 @@ class TransactionService
     private const POYNT_ENDPOINT = 'https://services.poynt.net/businesses';
 
     private Context $context;
-    private Client $httpClient;
+    private ClientInterface $httpClient;
 
-    public function __construct(Context $context)
+    public function __construct(Context $context, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
-        $this->httpClient = new Client();
+        $this->httpClient = $httpClient ?? $context->getHttpClient();
     }
 
     /**
