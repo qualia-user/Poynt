@@ -14,6 +14,7 @@ use Exception;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
+use JsonException;
 use Ramsey\Uuid\Uuid;
 use RuntimeException;
 
@@ -57,15 +58,13 @@ class SubscriptionService
                 ]
             ]);
             $body = (string) $response->getBody();
-            $decoded = json_decode($body, true);
-
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                $this->context->getLog()->error('Error parsing plans response: ' . json_last_error_msg());
-
-                return null;
-            }
+            $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
 
             return $decoded;
+        } catch (JsonException $e) {
+            $this->context->getLog()->error("Error parsing plans response: %s. Body: %s" . $e->getMessage());
+
+            return null;
         } catch (RequestException $e) {
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()

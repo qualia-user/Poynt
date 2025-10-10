@@ -12,110 +12,112 @@ namespace App\Config {
     }
 }
 
-namespace Tests\Services {
+namespace Services {
 
-use App\Config\ConfigApp;
-use App\Core\Api;
-use App\Core\Context;
-use App\Services\SubscriptionService;
-use Doctrine\DBAL\Connection;
-use GuzzleHttp\Client;
-use GuzzleHttp\Exception\RequestException;
-use GuzzleHttp\Handler\MockHandler;
-use GuzzleHttp\HandlerStack;
-use GuzzleHttp\Psr7\Request;
-use GuzzleHttp\Psr7\Response;
-use Monolog\Handler\TestHandler;
-use Monolog\Logger;
-use PHPUnit\Framework\TestCase;
-
-/**
- * @covers \App\Services\SubscriptionService::fetchPlans
- */
-class SubscriptionServiceTest extends TestCase
-{
-    private Context $context;
-
-    private TestHandler $testHandler;
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $api = $this->createMock(Api::class);
-        $connection = $this->createMock(Connection::class);
-        $this->testHandler = new TestHandler();
-        $logger = new Logger('test');
-        $logger->pushHandler($this->testHandler);
-
-        $this->context = new Context($api, $connection, $logger);
-
-        ConfigApp::$orgId = 'test-org';
-        ConfigApp::$appId = 'test-app';
-    }
-
-    public function testFetchPlansReturnsDecodedResponseAndDoesNotLogErrors(): void
-    {
-        $expected = [
-            ['planId' => '123', 'name' => 'Starter'],
-        ];
-
-        $service = $this->createServiceWithQueue([
-            new Response(200, ['Content-Type' => 'application/json'], json_encode($expected, JSON_THROW_ON_ERROR)),
-        ]);
-
-        $result = $service->fetchPlans('token');
-
-        self::assertSame($expected, $result);
-        self::assertFalse($this->testHandler->hasErrorRecords());
-    }
-
-    public function testFetchPlansReturnsNullAndLogsErrorWhenJsonInvalid(): void
-    {
-        $service = $this->createServiceWithQueue([
-            new Response(200, ['Content-Type' => 'application/json'], '{invalid json'),
-        ]);
-
-        $result = $service->fetchPlans('token');
-
-        self::assertNull($result);
-        self::assertTrue($this->testHandler->hasErrorThatContains('Error parsing plans response'));
-    }
-
-    public function testFetchPlansReturnsNullAndLogsWhenRequestExceptionOccurs(): void
-    {
-        $service = $this->createServiceWithQueue([
-            new RequestException(
-                'Server error',
-                new Request('GET', SubscriptionService::POYNT_BILLING_BASE)
-            ),
-        ]);
-
-        $result = $service->fetchPlans('token');
-
-        self::assertNull($result);
-        self::assertTrue($this->testHandler->hasErrorThatContains('Error fetching plans'));
-    }
+    use App\Config\ConfigApp;
+    use App\Core\Api;
+    use App\Core\Context;
+    use App\Services\SubscriptionService;
+    use Doctrine\DBAL\Connection;
+    use GuzzleHttp\Client;
+    use GuzzleHttp\Exception\RequestException;
+    use GuzzleHttp\Handler\MockHandler;
+    use GuzzleHttp\HandlerStack;
+    use GuzzleHttp\Psr7\Request;
+    use GuzzleHttp\Psr7\Response;
+    use Monolog\Handler\TestHandler;
+    use Monolog\Logger;
+    use PHPUnit\Framework\TestCase;
 
     /**
-     * @param array<int, mixed> $queue
+     * @covers \App\Services\SubscriptionService::fetchPlans
      */
-    private function createServiceWithQueue(array $queue): SubscriptionService
+    class SubscriptionServiceTest extends TestCase
     {
-        $service = new SubscriptionService($this->context);
+        private Context $context;
 
-        $mockHandler = new MockHandler($queue);
-        $handlerStack = HandlerStack::create($mockHandler);
-        $client = new Client([
-            'handler' => $handlerStack,
-            'base_uri' => SubscriptionService::POYNT_BILLING_BASE,
-        ]);
+        private TestHandler $testHandler;
 
-        $property = new \ReflectionProperty(SubscriptionService::class, 'http');
-        $property->setAccessible(true);
-        $property->setValue($service, $client);
+        protected function setUp(): void
+        {
+            parent::setUp();
 
-        return $service;
+            $api = $this->createMock(Api::class);
+            $connection = $this->createMock(Connection::class);
+            $this->testHandler = new TestHandler();
+            $logger = new Logger('test');
+            $logger->pushHandler($this->testHandler);
+
+            $this->context = new Context($api, $connection, $logger);
+
+            ConfigApp::$orgId = 'test-org';
+            ConfigApp::$appId = 'test-app';
+        }
+
+        public function testFetchPlansReturnsDecodedResponseAndDoesNotLogErrors(): void
+        {
+            $expected = [
+                ['planId' => '123', 'name' => 'Starter'],
+            ];
+
+            $service = $this->createServiceWithQueue([
+                new Response(200, ['Content-Type' => 'application/json'], json_encode($expected, JSON_THROW_ON_ERROR)),
+            ]);
+
+            $result = $service->fetchPlans('token');
+
+            self::assertSame($expected, $result);
+            self::assertFalse($this->testHandler->hasErrorRecords());
+        }
+
+        public function testFetchPlansReturnsNullAndLogsErrorWhenJsonInvalid(): void
+        {
+            $service = $this->createServiceWithQueue([
+                new Response(200, ['Content-Type' => 'application/json'], '{invalid json'),
+            ]);
+
+            $result = $service->fetchPlans('token');
+
+            self::assertNull($result);
+            self::assertTrue($this->testHandler->hasErrorThatContains('Error parsing plans response'));
+        }
+
+        public function testFetchPlansReturnsNullAndLogsWhenRequestExceptionOccurs(): void
+        {
+            $service = $this->createServiceWithQueue([
+                new RequestException(
+                    'Server error',
+                    new Request('GET', SubscriptionService::POYNT_BILLING_BASE)
+                ),
+            ]);
+
+            $result = $service->fetchPlans('token');
+
+            self::assertNull($result);
+            self::assertTrue($this->testHandler->hasErrorThatContains('Error fetching plans'));
+        }
+
+        /**
+         * @param array<int, mixed> $queue
+         */
+        private function createServiceWithQueue(array $queue): SubscriptionService
+        {
+            $service = new SubscriptionService($this->context);
+
+            $mockHandler = new MockHandler($queue);
+            $handlerStack = HandlerStack::create($mockHandler);
+            $client = new Client([
+                'handler' => $handlerStack,
+                'base_uri' => SubscriptionService::POYNT_BILLING_BASE,
+            ]);
+
+            $property = new \ReflectionProperty(SubscriptionService::class, 'http');
+            $property->setAccessible(true);
+            $property->setValue($service, $client);
+
+            return $service;
+        }
+
     }
 }
 
