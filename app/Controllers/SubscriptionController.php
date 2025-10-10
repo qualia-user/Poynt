@@ -69,4 +69,9 @@ class SubscriptionController extends Controller
             'status' => 'trialing',
         ];
     }
+
+    public function setSubscriptionService(SubscriptionService $subscriptionService): void
+    {
+        $this->subscriptionService = $subscriptionService;
+    }
 }

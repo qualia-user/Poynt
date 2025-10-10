@@ -11,11 +11,11 @@ class OAuthController extends Controller {
     private PlatformRegistry $platformRegistry;
     private CallbackService $callbackService;
 
-    public function __construct(Context $context) {
+    public function __construct(Context $context, ?PlatformRegistry $platformRegistry = null, ?CallbackService $callbackService = null) {
         parent::__construct($context);
 
-        $this->platformRegistry = new PlatformRegistry($this->context);
-        $this->callbackService = new CallbackService($this->context, $this->platformRegistry);
+        $this->platformRegistry = $platformRegistry ?? new PlatformRegistry($this->context);
+        $this->callbackService = $callbackService ?? new CallbackService($this->context, $this->platformRegistry);
     }
 
     /**
@@ -63,7 +63,9 @@ class OAuthController extends Controller {
             \App\Core\Api::response($result['status'], ['error' => $result['error']]);
         }
 
-        exit;
+        if (!\App\Core\Api::isExitDisabled()) {
+            exit;
+        }
     }
 
 

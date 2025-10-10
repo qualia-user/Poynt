@@ -10,6 +10,16 @@ class Api
     private static ?LoggerInterface $log = null;
 
     /**
+     * @var bool
+     */
+    private static bool $exitDisabled = false;
+
+    /**
+     * @var array|null
+     */
+    private static ?array $lastResponse = null;
+
+    /**
      * @var string
      */
     private string $requestId;
@@ -142,7 +152,13 @@ class Api
         } else {
             $return = !$returnRaw ? json_encode(new Response($response)) : json_encode($response);
 
-            if ($exit) {
+            self::$lastResponse = [
+                'status' => $status,
+                'response' => $response,
+                'raw' => $return,
+            ];
+
+            if ($exit && !self::$exitDisabled) {
                 if (isset($response)) {
                     echo $return;
                 }
@@ -153,10 +169,35 @@ class Api
                     self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent with error status '{$status}' and response '{$responseJSON}'.", self::getLogContext());
                 }
                 exit;
-            } else {
-                return $return;
             }
+
+            return $return;
         }
+    }
+
+    public static function disableExit(): void
+    {
+        self::$exitDisabled = true;
+    }
+
+    public static function enableExit(): void
+    {
+        self::$exitDisabled = false;
+    }
+
+    public static function getLastResponse(): ?array
+    {
+        return self::$lastResponse;
+    }
+
+    public static function clearLastResponse(): void
+    {
+        self::$lastResponse = null;
+    }
+
+    public static function isExitDisabled(): bool
+    {
+        return self::$exitDisabled;
     }
 
     /**

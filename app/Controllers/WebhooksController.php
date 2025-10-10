@@ -10,9 +10,12 @@ use PDO;
 
 class WebhooksController extends Controller
 {
+    private SubscriptionService $subscriptionService;
+
     public function __construct(Context $context)
     {
         parent::__construct($context);
+        $this->subscriptionService = new SubscriptionService($context);
     }
 
     /**
@@ -37,7 +40,7 @@ class WebhooksController extends Controller
         $eventType = $payload['eventType'] ?? null;
 
         // Insert audit record with default processed=false
-        $headers = getallheaders();
+        $headers = $this->getAllHeaders();
         $conn = $this->context->getConn();
         $conn->insert('webhook_audit', [
             'event_type' => $eventType,
@@ -111,8 +114,7 @@ class WebhooksController extends Controller
             throw new \InvalidArgumentException('Missing subscription data');
         }
 
-        $service = new SubscriptionService($this->context);
-        $service->activateSubscription($subscriptionId, $businessId, $storeId);
+        $this->subscriptionService->activateSubscription($subscriptionId, $businessId, $storeId);
     }
 
     /**
@@ -130,8 +132,29 @@ class WebhooksController extends Controller
             throw new \InvalidArgumentException('Missing subscription data');
         }
 
-        $service = new SubscriptionService($this->context);
-        $service->cancelSubscription($subscriptionId, $businessId, $storeId);
+        $this->subscriptionService->cancelSubscription($subscriptionId, $businessId, $storeId);
+    }
+
+    private function getAllHeaders(): array
+    {
+        if (function_exists('getallheaders')) {
+            return getallheaders();
+        }
+
+        $headers = [];
+        foreach ($_SERVER as $name => $value) {
+            if (str_starts_with($name, 'HTTP_')) {
+                $headerName = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))));
+                $headers[$headerName] = $value;
+            }
+        }
+
+        return $headers;
+    }
+
+    public function setSubscriptionService(SubscriptionService $subscriptionService): void
+    {
+        $this->subscriptionService = $subscriptionService;
     }
 
 }
