@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Config\ConfigApp;
 use App\Core\Context;
 use App\Core\Response;
+use App\Services\Support\PoyntDataFormatter as Format;
 use DateInterval;
 //use DateMalformedIntervalStringException;
 //use DateMalformedStringException;
@@ -487,12 +488,12 @@ class SubscriptionService
         $planId           = $poyntSub['planId'];
         $status           = $poyntSub['status'];
         $phase            = $poyntSub['phase'];
-        $trialStart       = $poyntSub['trialStart']       ?? null;
-        $trialEnd         = $poyntSub['trialEnd']         ?? null;
-        $startAt          = $poyntSub['startAt']          ?? null;
-        $currentPeriodEnd = $poyntSub['currentPeriodEnd'] ?? null;
+        $trialStart       = Format::optionalTimestamp($poyntSub['trialStart']       ?? null);
+        $trialEnd         = Format::optionalTimestamp($poyntSub['trialEnd']         ?? null);
+        $startAt          = Format::optionalTimestamp($poyntSub['startAt']          ?? null);
+        $currentPeriodEnd = Format::optionalTimestamp($poyntSub['currentPeriodEnd'] ?? null);
         $cancelAtEnd      = $poyntSub['cancelAtPeriodEnd'] ?? false;
-        $canceledAt       = $poyntSub['canceledAt']       ?? null;
+        $canceledAt       = Format::optionalTimestamp($poyntSub['canceledAt']       ?? null);
 
         $sql = <<<SQL
         INSERT INTO subscription (

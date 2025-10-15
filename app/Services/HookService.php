@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -41,28 +42,47 @@ class HookService
         $hookId = $hookData['id'];
         $businessId = $hookData['businessId'];
 
-        $metadata = json_encode($hookData);
-        if ($metadata === false) {
-            $this->context->getLog()->error(
-                "HookService::upsert: failed to json_encode hookData for hook_id={$hookId}"
-            );
-            return false;
+        $url = $hookData['url'] ?? $hookData['destinationUrl'] ?? null;
+        $eventTypes = $hookData['eventTypes'] ?? $hookData['events'] ?? [];
+        if (!is_array($eventTypes)) {
+            $eventTypes = [$eventTypes];
         }
+        $eventTypesLiteral = Format::postgresTextArray($eventTypes);
+        $status = $hookData['status'] ?? null;
+        $rawPayload = Format::jsonObject($hookData);
+        $createdAtExt = Format::optionalTimestamp($hookData['createdAt'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($hookData['updatedAt'] ?? null);
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
             $this->context->getConn()->executeStatement(
-                'INSERT INTO hook (hook_id, business_id, metadata, created_at, updated_at)
-                 VALUES (:hookId, :businessId, :metadata, :createdAt, :updatedAt)
-                 ON CONFLICT (hook_id) DO UPDATE SET
-                     business_id = EXCLUDED.business_id,
-                     metadata = EXCLUDED.metadata,
-                     updated_at = EXCLUDED.updated_at',
+                'INSERT INTO hook (
+                    hook_id, business_id, url, event_types, status,
+                    raw_payload, created_at_ext, updated_at_ext,
+                    created_at, updated_at
+                ) VALUES (
+                    :hookId, :businessId, :url, :eventTypes, :status,
+                    :rawPayload, :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
+                ) ON CONFLICT (hook_id) DO UPDATE SET
+                    business_id = EXCLUDED.business_id,
+                    url = EXCLUDED.url,
+                    event_types = EXCLUDED.event_types,
+                    status = EXCLUDED.status,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    updated_at = EXCLUDED.updated_at',
                 [
                     'hookId' => $hookId,
                     'businessId' => $businessId,
-                    'metadata' => $metadata,
+                    'url' => $url,
+                    'eventTypes' => $eventTypesLiteral,
+                    'status' => $status,
+                    'rawPayload' => $rawPayload,
+                    'createdAtExt' => $createdAtExt,
+                    'updatedAtExt' => $updatedAtExt,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]

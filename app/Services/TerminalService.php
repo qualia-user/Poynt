@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 
 class TerminalService
 {
@@ -51,13 +52,7 @@ class TerminalService
                 }
 
                 $terminalId = $device['id'];
-                $metadata   = json_encode($device);
-                if ($metadata === false) {
-                    $this->context->getLog()->error(
-                        "TerminalService::upsertTerminals: failed to json_encode device for terminal_id={$terminalId}"
-                    );
-                    return false;
-                }
+                $metadata   = Format::jsonObject($device);
 
                 $affected = $stmt->executeStatement([
                     'terminalId' => $terminalId,

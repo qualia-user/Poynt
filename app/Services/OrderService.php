@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 
 class OrderService
 {
@@ -31,46 +32,167 @@ class OrderService
         $businessId = $orderData['businessId'];
         $storeId = $orderData['storeId'] ?? null;
         $status = $orderData['status'] ?? null;
-        $isTaxInclusive = $orderData['isTaxInclusive'] ?? null;
+        $fulfillmentStatus = $orderData['fulfillmentStatus'] ?? null;
+        $transactionStatusSummary = $orderData['transactionStatusSummary'] ?? null;
 
-        $customerJson = json_encode($orderData['customer'] ?? null);
-        $transactionsJson = json_encode($orderData['transactions'] ?? null);
-        $totalsJson = json_encode($orderData['totals'] ?? null);
-        $taxesJson = json_encode($orderData['taxes'] ?? null);
+        $currency = $this->coalesceValue($orderData, [
+            ['currency'],
+            ['amounts', 'currency'],
+            ['totals', 'currency'],
+            ['amounts', 'transactionAmount', 'currency'],
+            ['totals', 'transactionAmount', 'currency'],
+        ]);
 
-        if (in_array(false, [$customerJson, $transactionsJson, $totalsJson, $taxesJson], true)) {
-            $this->context->getLog()->error(
-                "OrderService::upsert: failed to json_encode orderData for order_id={$orderId}"
-            );
-            return false;
-        }
+        $subtotalMinor = $this->coalesceAmount($orderData, [
+            ['amounts', 'subtotal'],
+            ['amounts', 'subTotal'],
+            ['totals', 'subtotal'],
+            ['totals', 'subTotal'],
+        ]);
+        $discountMinor = $this->coalesceAmount($orderData, [
+            ['amounts', 'discount'],
+            ['totals', 'discount'],
+            ['totals', 'discountTotal'],
+        ]);
+        $taxTotalMinor = $this->coalesceAmount($orderData, [
+            ['amounts', 'tax'],
+            ['totals', 'tax'],
+            ['totals', 'taxTotal'],
+        ]);
+        $tipTotalMinor = $this->coalesceAmount($orderData, [
+            ['amounts', 'tip'],
+            ['amounts', 'tipAmount'],
+            ['totals', 'tip'],
+        ]);
+        $feeTotalMinor = $this->coalesceAmount($orderData, [
+            ['amounts', 'fee'],
+            ['amounts', 'feeAmount'],
+            ['totals', 'fee'],
+        ]);
+        $shippingTotalMinor = $this->coalesceAmount($orderData, [
+            ['amounts', 'shipping'],
+            ['totals', 'shipping'],
+            ['totals', 'shippingTotal'],
+        ]);
+        $netTotalMinor = $this->coalesceAmount($orderData, [
+            ['amounts', 'net'],
+            ['amounts', 'netAmount'],
+            ['totals', 'net'],
+            ['totals', 'netTotal'],
+        ]);
+
+        $customerUserId = Format::optionalInt($orderData['customerUserId'] ?? $orderData['customer']['userId'] ?? null);
+        $employeeUserId = Format::optionalInt($orderData['employeeUserId'] ?? null);
+        $storeDeviceId = $this->coalesceValue($orderData, [
+            ['storeDeviceId'],
+            ['deviceId'],
+            ['context', 'storeDeviceId'],
+        ]);
+        $source = $orderData['source'] ?? null;
+        $sourceApp = $orderData['sourceApp'] ?? $orderData['sourceApplication'] ?? null;
+
+        $taxExempted = Format::optionalBool($orderData['taxExempted'] ?? null);
+        $valid = Format::optionalBool($orderData['valid'] ?? null);
+        $accepted = Format::optionalBool($orderData['accepted'] ?? null);
+        $notes = Format::stringOrNull($orderData['notes'] ?? null);
+
+        $customerJson = Format::jsonObject($orderData['customer'] ?? []);
+        $transactionsJson = Format::jsonArray($orderData['transactions'] ?? []);
+        $amountsJson = Format::jsonObject($orderData['amounts'] ?? ($orderData['totals'] ?? []));
+        $contextJson = Format::jsonObject($orderData['context'] ?? []);
+        $rawPayload = Format::jsonObject($orderData);
+
+        $createdAtExt = Format::optionalTimestamp($orderData['createdAt'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($orderData['updatedAt'] ?? null);
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
             $this->context->getConn()->executeStatement(
-                'INSERT INTO "order" (order_id, business_id, store_id, status, is_tax_inclusive, customer_json, transactions_json, totals_json, taxes_json, created_at, updated_at) '
-                . 'VALUES (:orderId, :businessId, :storeId, :status, :isTaxInclusive, :customerJson, :transactionsJson, :totalsJson, :taxesJson, :createdAt, :updatedAt) '
-                . 'ON CONFLICT (order_id) DO UPDATE SET '
-                . 'business_id = EXCLUDED.business_id, '
-                . 'store_id = EXCLUDED.store_id, '
-                . 'status = EXCLUDED.status, '
-                . 'is_tax_inclusive = EXCLUDED.is_tax_inclusive, '
-                . 'customer_json = EXCLUDED.customer_json, '
-                . 'transactions_json = EXCLUDED.transactions_json, '
-                . 'totals_json = EXCLUDED.totals_json, '
-                . 'taxes_json = EXCLUDED.taxes_json, '
-                . 'updated_at = EXCLUDED.updated_at',
+                'INSERT INTO "order" (
+                    order_id, business_id, store_id, currency,
+                    status, fulfillment_status, transaction_status_summary,
+                    subtotal_minor, discount_total_minor, tax_total_minor, tip_total_minor,
+                    fee_total_minor, shipping_total_minor, net_total_minor,
+                    tax_exempted, valid, accepted, notes,
+                    customer_user_id, employee_user_id, store_device_id,
+                    source, source_app,
+                    customer_json, transactions_json, amounts_json, context_json, raw_payload,
+                    created_at_ext, updated_at_ext,
+                    created_at, updated_at
+                ) VALUES (
+                    :orderId, :businessId, :storeId, :currency,
+                    :status, :fulfillmentStatus, :transactionStatusSummary,
+                    :subtotalMinor, :discountTotalMinor, :taxTotalMinor, :tipTotalMinor,
+                    :feeTotalMinor, :shippingTotalMinor, :netTotalMinor,
+                    :taxExempted, :valid, :accepted, :notes,
+                    :customerUserId, :employeeUserId, :storeDeviceId,
+                    :source, :sourceApp,
+                    :customerJson, :transactionsJson, :amountsJson, :contextJson, :rawPayload,
+                    :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
+                ) ON CONFLICT (order_id) DO UPDATE SET
+                    business_id = EXCLUDED.business_id,
+                    store_id = EXCLUDED.store_id,
+                    currency = EXCLUDED.currency,
+                    status = EXCLUDED.status,
+                    fulfillment_status = EXCLUDED.fulfillment_status,
+                    transaction_status_summary = EXCLUDED.transaction_status_summary,
+                    subtotal_minor = EXCLUDED.subtotal_minor,
+                    discount_total_minor = EXCLUDED.discount_total_minor,
+                    tax_total_minor = EXCLUDED.tax_total_minor,
+                    tip_total_minor = EXCLUDED.tip_total_minor,
+                    fee_total_minor = EXCLUDED.fee_total_minor,
+                    shipping_total_minor = EXCLUDED.shipping_total_minor,
+                    net_total_minor = EXCLUDED.net_total_minor,
+                    tax_exempted = EXCLUDED.tax_exempted,
+                    valid = EXCLUDED.valid,
+                    accepted = EXCLUDED.accepted,
+                    notes = EXCLUDED.notes,
+                    customer_user_id = EXCLUDED.customer_user_id,
+                    employee_user_id = EXCLUDED.employee_user_id,
+                    store_device_id = EXCLUDED.store_device_id,
+                    source = EXCLUDED.source,
+                    source_app = EXCLUDED.source_app,
+                    customer_json = EXCLUDED.customer_json,
+                    transactions_json = EXCLUDED.transactions_json,
+                    amounts_json = EXCLUDED.amounts_json,
+                    context_json = EXCLUDED.context_json,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    updated_at = EXCLUDED.updated_at',
                 [
                     'orderId' => $orderId,
                     'businessId' => $businessId,
                     'storeId' => $storeId,
+                    'currency' => $currency,
                     'status' => $status,
-                    'isTaxInclusive' => $isTaxInclusive,
+                    'fulfillmentStatus' => $fulfillmentStatus,
+                    'transactionStatusSummary' => $transactionStatusSummary,
+                    'subtotalMinor' => $subtotalMinor,
+                    'discountTotalMinor' => $discountMinor,
+                    'taxTotalMinor' => $taxTotalMinor,
+                    'tipTotalMinor' => $tipTotalMinor,
+                    'feeTotalMinor' => $feeTotalMinor,
+                    'shippingTotalMinor' => $shippingTotalMinor,
+                    'netTotalMinor' => $netTotalMinor,
+                    'taxExempted' => $taxExempted,
+                    'valid' => $valid,
+                    'accepted' => $accepted,
+                    'notes' => $notes,
+                    'customerUserId' => $customerUserId,
+                    'employeeUserId' => $employeeUserId,
+                    'storeDeviceId' => $storeDeviceId,
+                    'source' => $source,
+                    'sourceApp' => $sourceApp,
                     'customerJson' => $customerJson,
                     'transactionsJson' => $transactionsJson,
-                    'totalsJson' => $totalsJson,
-                    'taxesJson' => $taxesJson,
+                    'amountsJson' => $amountsJson,
+                    'contextJson' => $contextJson,
+                    'rawPayload' => $rawPayload,
+                    'createdAtExt' => $createdAtExt,
+                    'updatedAtExt' => $updatedAtExt,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]
@@ -96,16 +218,33 @@ class OrderService
             return;
         }
 
-        $sql = 'INSERT INTO order_item (order_item_id, order_id, name, quantity, price_amount, taxes_json, payload, created_at, updated_at)'
-            . ' VALUES (:itemId, :orderId, :name, :quantity, :priceAmount, :taxesJson, :payload, :createdAt, :updatedAt)'
-            . ' ON CONFLICT (order_item_id) DO UPDATE SET'
-            . ' order_id = EXCLUDED.order_id,'
-            . ' name = EXCLUDED.name,'
-            . ' quantity = EXCLUDED.quantity,'
-            . ' price_amount = EXCLUDED.price_amount,'
-            . ' taxes_json = EXCLUDED.taxes_json,'
-            . ' payload = EXCLUDED.payload,'
-            . ' updated_at = EXCLUDED.updated_at';
+        $sql = 'INSERT INTO order_item (
+                order_id, order_item_id, product_id, name, sku, category_id,
+                quantity, unit_price_minor, discount_minor, tax_minor, fee_minor,
+                unit_of_measure, status, taxes_json, raw_payload,
+                created_at_ext, updated_at_ext, created_at, updated_at
+            ) VALUES (
+                :orderId, :itemId, :productId, :name, :sku, :categoryId,
+                :quantity, :unitPriceMinor, :discountMinor, :taxMinor, :feeMinor,
+                :unitOfMeasure, :status, :taxesJson, :payload,
+                :createdAtExt, :updatedAtExt, :createdAt, :updatedAt
+            ) ON CONFLICT (order_id, order_item_id) DO UPDATE SET
+                product_id = EXCLUDED.product_id,
+                name = EXCLUDED.name,
+                sku = EXCLUDED.sku,
+                category_id = EXCLUDED.category_id,
+                quantity = EXCLUDED.quantity,
+                unit_price_minor = EXCLUDED.unit_price_minor,
+                discount_minor = EXCLUDED.discount_minor,
+                tax_minor = EXCLUDED.tax_minor,
+                fee_minor = EXCLUDED.fee_minor,
+                unit_of_measure = EXCLUDED.unit_of_measure,
+                status = EXCLUDED.status,
+                taxes_json = EXCLUDED.taxes_json,
+                raw_payload = EXCLUDED.raw_payload,
+                created_at_ext = EXCLUDED.created_at_ext,
+                updated_at_ext = EXCLUDED.updated_at_ext,
+                updated_at = EXCLUDED.updated_at';
         $stmt = $this->context->getConn()->prepare($sql);
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
@@ -116,26 +255,52 @@ class OrderService
             }
             $itemId = $item['id'];
             $name = $item['name'] ?? null;
-            $quantity = $item['quantity'] ?? null;
-            $priceAmount = $item['price'] ?? null;
-            $taxesJson = json_encode($item['taxes'] ?? null);
-            $payload = json_encode($item);
-
-            if (in_array(false, [$taxesJson, $payload], true)) {
-                $this->context->getLog()->error(
-                    "OrderService::upsertItems: failed to json_encode item for item_id={$itemId}"
-                );
-                continue;
-            }
+            $sku = $item['sku'] ?? ($item['upc'] ?? null);
+            $productId = $item['productId'] ?? null;
+            $categoryId = $item['categoryId'] ?? null;
+            $quantity = Format::optionalNumericString($item['quantity'] ?? null);
+            $unitPriceMinor = $this->coalesceAmount($item, [
+                ['unitPrice'],
+                ['price'],
+                ['unitPriceAmount'],
+            ]);
+            $discountMinor = $this->coalesceAmount($item, [
+                ['discount'],
+                ['discountAmount'],
+            ]);
+            $taxMinor = $this->coalesceAmount($item, [
+                ['tax'],
+                ['taxAmount'],
+            ]);
+            $feeMinor = $this->coalesceAmount($item, [
+                ['fee'],
+                ['feeAmount'],
+            ]);
+            $unitOfMeasure = $item['unitOfMeasure'] ?? $item['unitOfMeasureCode'] ?? null;
+            $status = $item['status'] ?? null;
+            $taxesJson = Format::jsonArray($item['taxes'] ?? []);
+            $payload = Format::jsonObject($item);
+            $createdAtExt = Format::optionalTimestamp($item['createdAt'] ?? null);
+            $updatedAtExt = Format::optionalTimestamp($item['updatedAt'] ?? null);
 
             $stmt->executeStatement([
-                'itemId' => $itemId,
                 'orderId' => $orderId,
+                'itemId' => $itemId,
+                'productId' => $productId,
                 'name' => $name,
+                'sku' => $sku,
+                'categoryId' => $categoryId,
                 'quantity' => $quantity,
-                'priceAmount' => $priceAmount,
+                'unitPriceMinor' => $unitPriceMinor,
+                'discountMinor' => $discountMinor,
+                'taxMinor' => $taxMinor,
+                'feeMinor' => $feeMinor,
+                'unitOfMeasure' => $unitOfMeasure,
+                'status' => $status,
                 'taxesJson' => $taxesJson,
                 'payload' => $payload,
+                'createdAtExt' => $createdAtExt,
+                'updatedAtExt' => $updatedAtExt,
                 'createdAt' => $now,
                 'updatedAt' => $now,
             ]);
@@ -148,36 +313,30 @@ class OrderService
             return;
         }
 
-        $sql = 'INSERT INTO order_history (order_history_id, order_id, status, payload, created_at, updated_at)'
-            . ' VALUES (:historyId, :orderId, :status, :payload, :createdAt, :updatedAt)'
-            . ' ON CONFLICT (order_history_id) DO UPDATE SET'
-            . ' order_id = EXCLUDED.order_id,'
-            . ' status = EXCLUDED.status,'
-            . ' payload = EXCLUDED.payload,'
-            . ' updated_at = EXCLUDED.updated_at';
+        $sql = 'INSERT INTO order_history (
+                order_id, event, ts_ext, payload, created_at, updated_at
+            ) VALUES (
+                :orderId, :event, :tsExt, :payload, :createdAt, :updatedAt
+            ) ON CONFLICT (order_id, event, ts_ext) DO UPDATE SET
+                payload = EXCLUDED.payload,
+                updated_at = EXCLUDED.updated_at';
         $stmt = $this->context->getConn()->prepare($sql);
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         foreach ($history as $entry) {
-            if (!isset($entry['id'])) {
-                $this->context->getLog()->error('OrderService::upsertHistory: missing history id');
-                continue;
-            }
-            $historyId = $entry['id'];
-            $status = $entry['status'] ?? null;
-            $payload = json_encode($entry);
+            $event = Format::stringOrNull($entry['eventType'] ?? $entry['status'] ?? $entry['event'] ?? $entry['action'] ?? null);
+            $tsExt = Format::optionalTimestamp($entry['timestamp'] ?? $entry['eventTime'] ?? $entry['createdAt'] ?? $entry['updatedAt'] ?? null);
 
-            if ($payload === false) {
-                $this->context->getLog()->error(
-                    "OrderService::upsertHistory: failed to json_encode history for history_id={$historyId}"
-                );
+            if ($event === null || $tsExt === null) {
+                $this->context->getLog()->error('OrderService::upsertHistory: missing required event or timestamp');
                 continue;
             }
+            $payload = Format::jsonObject($entry);
 
             $stmt->executeStatement([
-                'historyId' => $historyId,
                 'orderId' => $orderId,
-                'status' => $status,
+                'event' => $event,
+                'tsExt' => $tsExt,
                 'payload' => $payload,
                 'createdAt' => $now,
                 'updatedAt' => $now,
@@ -191,44 +350,111 @@ class OrderService
             return;
         }
 
-        $sql = 'INSERT INTO order_shipment (order_shipment_id, order_id, status, taxes_json, payload, created_at, updated_at)'
-            . ' VALUES (:shipmentId, :orderId, :status, :taxesJson, :payload, :createdAt, :updatedAt)'
-            . ' ON CONFLICT (order_shipment_id) DO UPDATE SET'
-            . ' order_id = EXCLUDED.order_id,'
-            . ' status = EXCLUDED.status,'
-            . ' taxes_json = EXCLUDED.taxes_json,'
-            . ' payload = EXCLUDED.payload,'
-            . ' updated_at = EXCLUDED.updated_at';
+        $sql = 'INSERT INTO order_shipment (
+                order_id, shipment_id, status, amount_minor, carrier, tracking_no,
+                fulfill_at_ext, shipped_at_ext, delivered_at_ext,
+                payload, created_at, updated_at
+            ) VALUES (
+                :orderId, :shipmentId, :status, :amountMinor, :carrier, :trackingNo,
+                :fulfillAtExt, :shippedAtExt, :deliveredAtExt,
+                :payload, :createdAt, :updatedAt
+            ) ON CONFLICT (order_id, shipment_id) DO UPDATE SET
+                status = EXCLUDED.status,
+                amount_minor = EXCLUDED.amount_minor,
+                carrier = EXCLUDED.carrier,
+                tracking_no = EXCLUDED.tracking_no,
+                fulfill_at_ext = EXCLUDED.fulfill_at_ext,
+                shipped_at_ext = EXCLUDED.shipped_at_ext,
+                delivered_at_ext = EXCLUDED.delivered_at_ext,
+                payload = EXCLUDED.payload,
+                updated_at = EXCLUDED.updated_at';
         $stmt = $this->context->getConn()->prepare($sql);
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         foreach ($shipments as $shipment) {
-            if (!isset($shipment['id'])) {
+            $shipmentId = $shipment['id'] ?? $shipment['shipmentId'] ?? null;
+            if (!$shipmentId) {
                 $this->context->getLog()->error('OrderService::upsertShipments: missing shipment id');
                 continue;
             }
-            $shipmentId = $shipment['id'];
             $status = $shipment['status'] ?? null;
-            $taxesJson = json_encode($shipment['taxes'] ?? null);
-            $payload = json_encode($shipment);
-
-            if (in_array(false, [$taxesJson, $payload], true)) {
-                $this->context->getLog()->error(
-                    "OrderService::upsertShipments: failed to json_encode shipment for shipment_id={$shipmentId}"
-                );
-                continue;
-            }
+            $amountMinor = $this->coalesceAmount($shipment, [
+                ['amount'],
+                ['amounts', 'total'],
+            ]);
+            $carrier = $shipment['carrier'] ?? $shipment['carrierName'] ?? null;
+            $trackingNo = $shipment['trackingNumber'] ?? $shipment['trackingNo'] ?? null;
+            $fulfillAtExt = Format::optionalTimestamp($shipment['fulfillAt'] ?? $shipment['fulfilledAt'] ?? null);
+            $shippedAtExt = Format::optionalTimestamp($shipment['shippedAt'] ?? null);
+            $deliveredAtExt = Format::optionalTimestamp($shipment['deliveredAt'] ?? null);
+            $payload = Format::jsonObject($shipment);
 
             $stmt->executeStatement([
                 'shipmentId' => $shipmentId,
                 'orderId' => $orderId,
                 'status' => $status,
-                'taxesJson' => $taxesJson,
+                'amountMinor' => $amountMinor,
+                'carrier' => $carrier,
+                'trackingNo' => $trackingNo,
+                'fulfillAtExt' => $fulfillAtExt,
+                'shippedAtExt' => $shippedAtExt,
+                'deliveredAtExt' => $deliveredAtExt,
                 'payload' => $payload,
                 'createdAt' => $now,
                 'updatedAt' => $now,
             ]);
         }
+    }
+
+    /**
+     * @param array<mixed> $data
+     * @param array<int, array<int, string>> $paths
+     */
+    private function coalesceValue(array $data, array $paths): mixed
+    {
+        foreach ($paths as $path) {
+            $value = $this->nestedValue($data, $path);
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<mixed> $data
+     * @param array<int, array<int, string>> $paths
+     */
+    private function coalesceAmount(array $data, array $paths): ?int
+    {
+        foreach ($paths as $path) {
+            $value = $this->nestedValue($data, $path);
+            $amount = Format::amount($value);
+            if ($amount !== null) {
+                return $amount;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<mixed> $data
+     * @param array<int, string> $path
+     */
+    private function nestedValue(array $data, array $path): mixed
+    {
+        $current = $data;
+
+        foreach ($path as $segment) {
+            if (!is_array($current) || !array_key_exists($segment, $current)) {
+                return null;
+            }
+            $current = $current[$segment];
+        }
+
+        return $current;
     }
 }
 

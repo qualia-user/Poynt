@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -41,31 +42,59 @@ class ProductService
         $productId = $productData['id'];
         $businessId = $productData['businessId'];
         $name = $productData['name'] ?? null;
-
-        $metadata = json_encode($productData);
-        if ($metadata === false) {
-            $this->context->getLog()->error(
-                "ProductService::upsert: failed to json_encode productData for product_id={$productId}"
-            );
-            return false;
+        $sku = $productData['sku'] ?? null;
+        $priceMinor = Format::amount($productData['price'] ?? ($productData['priceAmount'] ?? null));
+        if ($priceMinor === null && isset($productData['price']['amount'])) {
+            $priceMinor = Format::amount($productData['price']['amount']);
         }
+        $currency = $productData['price']['currency'] ?? $productData['currency'] ?? null;
+        $categoryId = $productData['categoryId'] ?? null;
+        $isActive = Format::optionalBool($productData['isActive'] ?? $productData['active'] ?? null);
+        $attributes = Format::jsonObject($productData['attributes'] ?? $productData['attributeSets'] ?? []);
+        $rawPayload = Format::jsonObject($productData);
+        $createdAtExt = Format::optionalTimestamp($productData['createdAt'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($productData['updatedAt'] ?? null);
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
             $this->context->getConn()->executeStatement(
-                'INSERT INTO product (product_id, business_id, name, metadata, created_at, updated_at)
-                 VALUES (:productId, :businessId, :name, :metadata, :createdAt, :updatedAt)
-                 ON CONFLICT (product_id) DO UPDATE SET
-                     business_id = EXCLUDED.business_id,
-                     name = EXCLUDED.name,
-                     metadata = EXCLUDED.metadata,
-                     updated_at = EXCLUDED.updated_at',
+                'INSERT INTO product (
+                    product_id, business_id, name, sku, price_minor, currency,
+                    category_id, is_active, attributes, raw_payload,
+                    created_at_ext, updated_at_ext,
+                    created_at, updated_at
+                ) VALUES (
+                    :productId, :businessId, :name, :sku, :priceMinor, :currency,
+                    :categoryId, :isActive, :attributes, :rawPayload,
+                    :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
+                ) ON CONFLICT (product_id) DO UPDATE SET
+                    business_id = EXCLUDED.business_id,
+                    name = EXCLUDED.name,
+                    sku = EXCLUDED.sku,
+                    price_minor = EXCLUDED.price_minor,
+                    currency = EXCLUDED.currency,
+                    category_id = EXCLUDED.category_id,
+                    is_active = EXCLUDED.is_active,
+                    attributes = EXCLUDED.attributes,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    updated_at = EXCLUDED.updated_at',
                 [
                     'productId' => $productId,
                     'businessId' => $businessId,
                     'name' => $name,
-                    'metadata' => $metadata,
+                    'sku' => $sku,
+                    'priceMinor' => $priceMinor,
+                    'currency' => $currency,
+                    'categoryId' => $categoryId,
+                    'isActive' => $isActive,
+                    'attributes' => $attributes,
+                    'rawPayload' => $rawPayload,
+                    'createdAtExt' => $createdAtExt,
+                    'updatedAtExt' => $updatedAtExt,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]
@@ -96,12 +125,25 @@ class ProductService
             return;
         }
 
-        $sql = 'INSERT INTO product_variant (variant_id, product_id, metadata, created_at, updated_at)
-                VALUES (:variantId, :productId, :metadata, :createdAt, :updatedAt)
-                ON CONFLICT (variant_id) DO UPDATE SET
-                    product_id = EXCLUDED.product_id,
-                    metadata = EXCLUDED.metadata,
-                    updated_at = EXCLUDED.updated_at';
+        $sql = 'INSERT INTO product_variant (
+                product_id, variant_id, name, sku, price_minor,
+                attributes, raw_payload,
+                created_at_ext, updated_at_ext,
+                created_at, updated_at
+            ) VALUES (
+                :productId, :variantId, :name, :sku, :priceMinor,
+                :attributes, :rawPayload,
+                :createdAtExt, :updatedAtExt,
+                :createdAt, :updatedAt
+            ) ON CONFLICT (product_id, variant_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                sku = EXCLUDED.sku,
+                price_minor = EXCLUDED.price_minor,
+                attributes = EXCLUDED.attributes,
+                raw_payload = EXCLUDED.raw_payload,
+                created_at_ext = EXCLUDED.created_at_ext,
+                updated_at_ext = EXCLUDED.updated_at_ext,
+                updated_at = EXCLUDED.updated_at';
 
         $stmt = $this->context->getConn()->prepare($sql);
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
@@ -113,18 +155,27 @@ class ProductService
             }
 
             $variantId = $variant['id'];
-            $metadata = json_encode($variant);
-            if ($metadata === false) {
-                $this->context->getLog()->error(
-                    "ProductService::upsertVariants: failed to json_encode variant for variant_id={$variantId}"
-                );
-                continue;
+            $name = $variant['name'] ?? null;
+            $sku = $variant['sku'] ?? null;
+            $priceMinor = Format::amount($variant['price'] ?? ($variant['priceAmount'] ?? null));
+            if ($priceMinor === null && isset($variant['price']['amount'])) {
+                $priceMinor = Format::amount($variant['price']['amount']);
             }
+            $attributes = Format::jsonObject($variant['attributes'] ?? []);
+            $rawPayload = Format::jsonObject($variant);
+            $createdAtExt = Format::optionalTimestamp($variant['createdAt'] ?? null);
+            $updatedAtExt = Format::optionalTimestamp($variant['updatedAt'] ?? null);
 
             $stmt->executeStatement([
-                'variantId' => $variantId,
                 'productId' => $productId,
-                'metadata' => $metadata,
+                'variantId' => $variantId,
+                'name' => $name,
+                'sku' => $sku,
+                'priceMinor' => $priceMinor,
+                'attributes' => $attributes,
+                'rawPayload' => $rawPayload,
+                'createdAtExt' => $createdAtExt,
+                'updatedAtExt' => $updatedAtExt,
                 'createdAt' => $now,
                 'updatedAt' => $now,
             ]);

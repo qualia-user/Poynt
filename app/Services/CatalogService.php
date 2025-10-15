@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -40,32 +41,40 @@ class CatalogService
 
         $catalogId = $catalogData['id'];
         $businessId = $catalogData['businessId'];
-        $name = $catalogData['name'] ?? null;
-
-        $metadata = json_encode($catalogData);
-        if ($metadata === false) {
-            $this->context->getLog()->error(
-                "CatalogService::upsert: failed to json_encode catalogData for catalog_id={$catalogId}"
-            );
-            return false;
-        }
+        $name = $catalogData['name'] ?? $catalogData['displayName'] ?? null;
+        $deviceId = $catalogData['deviceId'] ?? null;
+        $rawPayload = Format::jsonObject($catalogData);
+        $createdAtExt = Format::optionalTimestamp($catalogData['createdAt'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($catalogData['updatedAt'] ?? null);
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
             $this->context->getConn()->executeStatement(
-                'INSERT INTO catalog (catalog_id, business_id, name, metadata, created_at, updated_at)
-                 VALUES (:catalogId, :businessId, :name, :metadata, :createdAt, :updatedAt)
-                 ON CONFLICT (catalog_id) DO UPDATE SET
-                     business_id = EXCLUDED.business_id,
-                     name = EXCLUDED.name,
-                     metadata = EXCLUDED.metadata,
-                     updated_at = EXCLUDED.updated_at',
+                'INSERT INTO catalog (
+                    catalog_id, business_id, name, device_id, raw_payload,
+                    created_at_ext, updated_at_ext,
+                    created_at, updated_at
+                ) VALUES (
+                    :catalogId, :businessId, :name, :deviceId, :rawPayload,
+                    :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
+                ) ON CONFLICT (catalog_id) DO UPDATE SET
+                    business_id = EXCLUDED.business_id,
+                    name = EXCLUDED.name,
+                    device_id = EXCLUDED.device_id,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    updated_at = EXCLUDED.updated_at',
                 [
                     'catalogId' => $catalogId,
                     'businessId' => $businessId,
                     'name' => $name,
-                    'metadata' => $metadata,
+                    'deviceId' => $deviceId,
+                    'rawPayload' => $rawPayload,
+                    'createdAtExt' => $createdAtExt,
+                    'updatedAtExt' => $updatedAtExt,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]

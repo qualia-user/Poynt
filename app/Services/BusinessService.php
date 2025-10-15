@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -50,13 +51,7 @@ class BusinessService {
         $active = !isset($businessData['active']) || (bool)$businessData['active'];
 
         // 2) Prepare the full payload as JSON for the metadata column
-        $metadata = json_encode($businessData);
-        if ($metadata === false) {
-            $this->context->getLog()->error(
-                "BusinessService::upsert: failed to json_encode businessData for business_id={$businessId}"
-            );
-            return false;
-        }
+        $metadata = Format::jsonObject($businessData);
 
         // 3) Current timestamp (PostgreSQL TIMESTAMPTZ)
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
@@ -310,13 +305,7 @@ class BusinessService {
                 $businessId = $store['businessId'];
                 $name       = $store['displayName'];
 
-                $metadata = json_encode($store);
-                if ($metadata === false) {
-                    $this->context->getLog()->error(
-                        "BusinessService::insertStores: failed to json_encode store for store_id={$storeId}"
-                    );
-                    return false;
-                }
+                $metadata = Format::jsonObject($store);
 
                 $stmt->executeStatement([
                     'storeId'    => $storeId,

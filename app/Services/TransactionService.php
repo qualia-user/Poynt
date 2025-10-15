@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -39,81 +40,144 @@ class TransactionService
         $transactionId = $transactionData['id'];
         $businessId = $transactionData['businessId'];
 
-        $metadata = json_encode($transactionData);
-        if ($metadata === false) {
-            $this->context->getLog()->error(
-                "TransactionService::upsert: failed to encode metadata for transaction_id={$transactionId}"
-            );
-            return false;
-        }
-
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
+        $storeId = $transactionData['storeId'] ?? null;
+        $references = $transactionData['references'] ?? [];
+        $orderId = $transactionData['orderId'] ?? null;
+        if (!$orderId && is_array($references)) {
+            foreach ($references as $reference) {
+                $type = strtoupper((string) ($reference['type'] ?? $reference['referenceType'] ?? ''));
+                if ($type === 'POYNT_ORDER' || $type === 'ORDER') {
+                    $orderId = $reference['id']
+                        ?? $reference['referenceId']
+                        ?? $reference['value']
+                        ?? null;
+                    if ($orderId) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        $action = $transactionData['action'] ?? $transactionData['type'] ?? null;
+        $status = $transactionData['status'] ?? null;
+        $settlementStatus = $transactionData['settlementStatus'] ?? ($transactionData['processorResponse']['settlementStatus'] ?? null);
+        $settled = Format::optionalBool($transactionData['settled'] ?? null);
+        $partiallyApproved = Format::optionalBool($transactionData['partiallyApproved'] ?? null);
+
         $amounts = $transactionData['amounts'] ?? [];
-        $transactionAmount = $amounts['transactionAmount']['amount'] ?? null;
-        $tipAmount = $amounts['tipAmount']['amount'] ?? null;
-        $cashbackAmount = $amounts['cashbackAmount']['amount'] ?? null;
-        $currency = $amounts['transactionAmount']['currency'] ?? null;
+        $transactionAmount = Format::amount($amounts['transactionAmount'] ?? null);
+        $orderAmount = Format::amount($amounts['orderAmount'] ?? null);
+        $tipAmount = Format::amount($amounts['tipAmount'] ?? null);
+        $cashbackAmount = Format::amount($amounts['cashbackAmount'] ?? null);
+        $currency = $amounts['transactionAmount']['currency'] ?? $transactionData['currency'] ?? null;
 
         $card = $transactionData['fundingSource']['card'] ?? [];
         $cardBrand = $card['brand'] ?? null;
         $cardLast4 = $card['numberLast4'] ?? ($card['lastFourDigits'] ?? null);
-        $cardHolder = $card['cardHolderName'] ?? null;
-        $cardExpMonth = $card['expirationMonth'] ?? null;
-        $cardExpYear = $card['expirationYear'] ?? null;
+        $entryMode = $card['entryMode'] ?? $card['entryMethod'] ?? ($transactionData['entryMode'] ?? null);
 
         $processor = $transactionData['processor'] ?? [];
-        $processorName = $processor['name'] ?? null;
+        $processorName = $processor['name'] ?? ($processor['processor'] ?? null);
         $processorStatus = $processor['status'] ?? ($transactionData['processorResponse']['status'] ?? null);
-        $processorTransactionId = $processor['transactionId'] ?? ($transactionData['processorResponse']['transactionId'] ?? null);
-        $processorAuthCode = $processor['authCode'] ?? ($transactionData['processorResponse']['authorizationCode'] ?? null);
+        $processorCode = $processor['responseCode'] ?? ($transactionData['processorResponse']['responseCode'] ?? null);
+        $approvalCode = $processor['authCode'] ?? ($transactionData['processorResponse']['authorizationCode'] ?? null);
+        $retrievalRef = $processor['rrn'] ?? ($transactionData['processorResponse']['retrievalReferenceNumber'] ?? null);
+        $batchId = $processor['batchId'] ?? ($transactionData['processorResponse']['batchId'] ?? null);
+
+        $customerUserId = Format::optionalInt($transactionData['customerUserId'] ?? null);
+
+        $referencesJson = Format::jsonArray($references);
+        $fundingSource = Format::jsonObject($transactionData['fundingSource'] ?? []);
+        $contextJson = Format::jsonObject($transactionData['context'] ?? []);
+        $rawPayload = Format::jsonObject($transactionData);
+
+        $createdAtExt = Format::optionalTimestamp($transactionData['createdAt'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($transactionData['updatedAt'] ?? null);
 
         try {
             $this->context->getConn()->executeStatement(
                 'INSERT INTO transaction (
-                    transaction_id, business_id, amount, tip_amount, cashback_amount, currency,
-                    card_brand, card_last4, card_holder, card_exp_month, card_exp_year,
-                    processor, processor_status, processor_transaction_id, processor_auth_code,
-                    metadata, created_at, updated_at
+                    transaction_id, business_id, store_id, order_id,
+                    action, status, settlement_status, settled, partially_approved,
+                    txn_amount_minor, order_amount_minor, tip_amount_minor, cashback_amount_minor, currency,
+                    card_brand, last4, entry_mode,
+                    processor, processor_status, processor_code, approval_code, retrieval_ref, batch_id,
+                    customer_user_id, references_json, funding_source, context_json, raw_payload,
+                    created_at_ext, updated_at_ext,
+                    created_at, updated_at
                 ) VALUES (
-                    :transactionId, :businessId, :amount, :tipAmount, :cashbackAmount, :currency,
-                    :cardBrand, :cardLast4, :cardHolder, :cardExpMonth, :cardExpYear,
-                    :processor, :processorStatus, :processorTransactionId, :processorAuthCode,
-                    :metadata, :createdAt, :updatedAt
+                    :transactionId, :businessId, :storeId, :orderId,
+                    :action, :status, :settlementStatus, :settled, :partiallyApproved,
+                    :txnAmountMinor, :orderAmountMinor, :tipAmountMinor, :cashbackAmountMinor, :currency,
+                    :cardBrand, :last4, :entryMode,
+                    :processor, :processorStatus, :processorCode, :approvalCode, :retrievalRef, :batchId,
+                    :customerUserId, :referencesJson, :fundingSource, :contextJson, :rawPayload,
+                    :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
                 ) ON CONFLICT (transaction_id) DO UPDATE SET
                     business_id = EXCLUDED.business_id,
-                    amount = EXCLUDED.amount,
-                    tip_amount = EXCLUDED.tip_amount,
-                    cashback_amount = EXCLUDED.cashback_amount,
+                    store_id = EXCLUDED.store_id,
+                    order_id = EXCLUDED.order_id,
+                    action = EXCLUDED.action,
+                    status = EXCLUDED.status,
+                    settlement_status = EXCLUDED.settlement_status,
+                    settled = EXCLUDED.settled,
+                    partially_approved = EXCLUDED.partially_approved,
+                    txn_amount_minor = EXCLUDED.txn_amount_minor,
+                    order_amount_minor = EXCLUDED.order_amount_minor,
+                    tip_amount_minor = EXCLUDED.tip_amount_minor,
+                    cashback_amount_minor = EXCLUDED.cashback_amount_minor,
                     currency = EXCLUDED.currency,
                     card_brand = EXCLUDED.card_brand,
-                    card_last4 = EXCLUDED.card_last4,
-                    card_holder = EXCLUDED.card_holder,
-                    card_exp_month = EXCLUDED.card_exp_month,
-                    card_exp_year = EXCLUDED.card_exp_year,
+                    last4 = EXCLUDED.last4,
+                    entry_mode = EXCLUDED.entry_mode,
                     processor = EXCLUDED.processor,
                     processor_status = EXCLUDED.processor_status,
-                    processor_transaction_id = EXCLUDED.processor_transaction_id,
-                    processor_auth_code = EXCLUDED.processor_auth_code,
-                    metadata = EXCLUDED.metadata,
+                    processor_code = EXCLUDED.processor_code,
+                    approval_code = EXCLUDED.approval_code,
+                    retrieval_ref = EXCLUDED.retrieval_ref,
+                    batch_id = EXCLUDED.batch_id,
+                    customer_user_id = EXCLUDED.customer_user_id,
+                    references_json = EXCLUDED.references_json,
+                    funding_source = EXCLUDED.funding_source,
+                    context_json = EXCLUDED.context_json,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
                     updated_at = EXCLUDED.updated_at',
                 [
                     'transactionId' => $transactionId,
                     'businessId' => $businessId,
-                    'amount' => $transactionAmount,
-                    'tipAmount' => $tipAmount,
-                    'cashbackAmount' => $cashbackAmount,
+                    'storeId' => $storeId,
+                    'orderId' => $orderId,
+                    'action' => $action,
+                    'status' => $status,
+                    'settlementStatus' => $settlementStatus,
+                    'settled' => $settled,
+                    'partiallyApproved' => $partiallyApproved,
+                    'txnAmountMinor' => $transactionAmount,
+                    'orderAmountMinor' => $orderAmount,
+                    'tipAmountMinor' => $tipAmount,
+                    'cashbackAmountMinor' => $cashbackAmount,
                     'currency' => $currency,
                     'cardBrand' => $cardBrand,
-                    'cardLast4' => $cardLast4,
-                    'cardHolder' => $cardHolder,
-                    'cardExpMonth' => $cardExpMonth,
-                    'cardExpYear' => $cardExpYear,
+                    'last4' => $cardLast4,
+                    'entryMode' => $entryMode,
                     'processor' => $processorName,
                     'processorStatus' => $processorStatus,
-                    'processorTransactionId' => $processorTransactionId,
-                    'processorAuthCode' => $processorAuthCode,
-                    'metadata' => $metadata,
+                    'processorCode' => $processorCode,
+                    'approvalCode' => $approvalCode,
+                    'retrievalRef' => $retrievalRef,
+                    'batchId' => $batchId,
+                    'customerUserId' => $customerUserId,
+                    'referencesJson' => $referencesJson,
+                    'fundingSource' => $fundingSource,
+                    'contextJson' => $contextJson,
+                    'rawPayload' => $rawPayload,
+                    'createdAtExt' => $createdAtExt,
+                    'updatedAtExt' => $updatedAtExt,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]
@@ -121,28 +185,19 @@ class TransactionService
 
             if ($receiptData !== null) {
                 $receiptHtml = $receiptData['html'] ?? null;
-                $receiptPayload = $receiptData['payload'] ?? null;
-                $payloadJson = $receiptPayload !== null ? json_encode($receiptPayload) : null;
-                if ($payloadJson === false) {
-                    $this->context->getLog()->error(
-                        "TransactionService::upsert: failed to encode receipt payload for transaction_id={$transactionId}"
-                    );
-                    return false;
-                }
+                $payloadJson = Format::jsonObject($receiptData['payload'] ?? []);
 
                 $this->context->getConn()->executeStatement(
-                    'INSERT INTO transaction_receipt (transaction_id, html, payload, created_at, updated_at)
-                     VALUES (:transactionId, :html, :payload, :createdAt, :updatedAt)
+                    'INSERT INTO transaction_receipt (transaction_id, html, payload, created_at)
+                     VALUES (:transactionId, :html, :payload, :createdAt)
                      ON CONFLICT (transaction_id) DO UPDATE SET
                         html = EXCLUDED.html,
-                        payload = EXCLUDED.payload,
-                        updated_at = EXCLUDED.updated_at',
+                        payload = EXCLUDED.payload',
                     [
                         'transactionId' => $transactionId,
                         'html' => $receiptHtml,
                         'payload' => $payloadJson,
                         'createdAt' => $now,
-                        'updatedAt' => $now,
                     ]
                 );
             }

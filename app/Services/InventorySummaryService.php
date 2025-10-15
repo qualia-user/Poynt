@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -31,51 +32,53 @@ class InventorySummaryService
      */
     public function upsert(array $summaryData): bool
     {
-        if (!isset($summaryData['id'], $summaryData['businessId'])) {
+        if (!isset($summaryData['businessId'], $summaryData['productId'])) {
             $this->context->getLog()->error(
-                'InventorySummaryService::upsert: missing required fields (id or businessId)'
+                'InventorySummaryService::upsert: missing required fields (businessId or productId)'
             );
             return false;
         }
 
-        $summaryId = $summaryData['id'];
         $businessId = $summaryData['businessId'];
-        $productId = $summaryData['productId'] ?? null;
-
-        $metadata = json_encode($summaryData);
-        if ($metadata === false) {
-            $this->context->getLog()->error(
-                "InventorySummaryService::upsert: failed to json_encode summaryData for inventory_summary_id={$summaryId}"
-            );
-            return false;
-        }
+        $productId = $summaryData['productId'];
+        $totalOnHand = Format::optionalNumericString($summaryData['totalOnHand'] ?? $summaryData['quantityOnHand'] ?? null);
+        $totalReserved = Format::optionalNumericString($summaryData['totalReserved'] ?? $summaryData['quantityReserved'] ?? null);
+        $payload = Format::jsonObject($summaryData);
+        $updatedAtExt = Format::optionalTimestamp($summaryData['updatedAt'] ?? null);
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
             $this->context->getConn()->executeStatement(
-                'INSERT INTO inventory_summary (inventory_summary_id, business_id, product_id, metadata, created_at, updated_at)
-                 VALUES (:summaryId, :businessId, :productId, :metadata, :createdAt, :updatedAt)
-                 ON CONFLICT (inventory_summary_id) DO UPDATE SET
-                     business_id = EXCLUDED.business_id,
-                     product_id = EXCLUDED.product_id,
-                     metadata = EXCLUDED.metadata,
-                     updated_at = EXCLUDED.updated_at',
+                'INSERT INTO inventory_summary (
+                    business_id, product_id, total_on_hand, total_reserved, updated_at_ext,
+                    payload, created_at, updated_at
+                ) VALUES (
+                    :businessId, :productId, :totalOnHand, :totalReserved, :updatedAtExt,
+                    :payload, :createdAt, :updatedAt
+                ) ON CONFLICT (business_id, product_id) DO UPDATE SET
+                    total_on_hand = EXCLUDED.total_on_hand,
+                    total_reserved = EXCLUDED.total_reserved,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    payload = EXCLUDED.payload,
+                    updated_at = EXCLUDED.updated_at',
                 [
-                    'summaryId' => $summaryId,
                     'businessId' => $businessId,
                     'productId' => $productId,
-                    'metadata' => $metadata,
+                    'totalOnHand' => $totalOnHand,
+                    'totalReserved' => $totalReserved,
+                    'updatedAtExt' => $updatedAtExt,
+                    'payload' => $payload,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]
             );
 
-            $this->context->getLog()->info("InventorySummaryService::upsert: upserted inventory summary {$summaryId}");
+            $this->context->getLog()->info("InventorySummaryService::upsert: upserted inventory summary {$businessId}-{$productId}");
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
-                "InventorySummaryService::upsert: database error for inventory_summary_id={$summaryId}: " . $e->getMessage()
+                "InventorySummaryService::upsert: database error for business_id={$businessId}, product_id={$productId}: " . $e->getMessage()
             );
             return false;
         }
