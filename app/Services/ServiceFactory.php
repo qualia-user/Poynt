@@ -52,4 +52,49 @@ class ServiceFactory
     {
         return new HookService($this->context, $businessId);
     }
+
+    public function business(?string $businessId = null): BusinessService
+    {
+        return new BusinessService($this->context, $businessId);
+    }
+
+    public function subscription(?string $storeId = null): SubscriptionService
+    {
+        return new SubscriptionService($this->context, $storeId);
+    }
+
+    public function order(): OrderService
+    {
+        return new OrderService($this->context);
+    }
+
+    public function token(): TokenService
+    {
+        return new TokenService($this->context);
+    }
+
+    public function transaction(): TransactionService
+    {
+        return new TransactionService($this->context);
+    }
+
+    /**
+     * Return the list of resource services that should be synchronized during onboarding.
+     *
+     * @param string $businessId
+     * @return array
+     */
+    public function onboardingResources(string $businessId): array
+    {
+        return [
+            $this->businessUser($businessId),
+            $this->catalog($businessId),
+            $this->customer($businessId),
+            $this->inventorySummary($businessId),
+            $this->paylink($businessId),
+            $this->product($businessId),
+            $this->tax($businessId),
+            $this->hook($businessId),
+        ];
+    }
 }
