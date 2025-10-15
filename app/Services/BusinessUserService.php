@@ -32,14 +32,15 @@ class BusinessUserService
      */
     public function upsert(array $userData): bool
     {
-        if (!isset($userData['id'], $userData['businessId'])) {
+        if (!isset($userData['businessId'])) {
             $this->context->getLog()->error(
-                'BusinessUserService::upsert: missing required fields (id or businessId)'
+                'BusinessUserService::upsert: missing required field businessId'
             );
             return false;
         }
 
-        $userId = Format::optionalInt($userData['id'] ?? null);
+        $userIdRaw = $userData['userId'] ?? $userData['id'] ?? null;
+        $userId = Format::optionalInt($userIdRaw);
         if ($userId === null) {
             $this->context->getLog()->error('BusinessUserService::upsert: user id must be numeric');
             return false;
@@ -47,10 +48,15 @@ class BusinessUserService
         $businessId = $userData['businessId'];
         $firstName = $userData['firstName'] ?? ($userData['name']['first'] ?? null);
         $lastName = $userData['lastName'] ?? ($userData['name']['last'] ?? null);
-        $role = $userData['role'] ?? ($userData['roles'][0] ?? null);
+
+        $role = $userData['role']
+            ?? ($userData['employmentDetails']['role'] ?? null)
+            ?? ($userData['employment']['role'] ?? null)
+            ?? ($userData['roles'][0] ?? null);
         $status = $userData['status'] ?? null;
         $credentials = Format::jsonArray($userData['credentials'] ?? []);
-        $employment = Format::jsonObject($userData['employment'] ?? $userData['employmentInfo'] ?? []);
+        $employmentPayload = $userData['employmentDetails'] ?? $userData['employment'] ?? $userData['employmentInfo'] ?? [];
+        $employment = Format::jsonObject($employmentPayload);
         $rawPayload = Format::jsonObject($userData);
         $createdAtExt = Format::optionalTimestamp($userData['createdAt'] ?? null);
         $updatedAtExt = Format::optionalTimestamp($userData['updatedAt'] ?? null);
