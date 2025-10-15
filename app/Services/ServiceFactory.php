@@ -87,6 +87,7 @@ class ServiceFactory
     public function onboardingResources(string $businessId): array
     {
         return [
+            $this->business($businessId),
             $this->businessUser($businessId),
             $this->catalog($businessId),
             $this->customer($businessId),

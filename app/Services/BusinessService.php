@@ -133,6 +133,30 @@ class BusinessService {
     }
 
     /**
+     * Fetch a business payload by business identifier.
+     *
+     * @param string|null $businessId Optional business identifier override
+     * @return array|false Array of business payloads (single element) or false when unavailable
+     */
+    public function fetchByBusinessId(?string $businessId = null): array|false
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if (!$businessId) {
+            return false;
+        }
+
+        $business = $this->fetchBusinessById($businessId);
+        if (!is_array($business) || $business === []) {
+            return false;
+        }
+
+        return [$business];
+    }
+
+    /**
      * Convenience wrapper that fetches business details using the
      * internally stored business identifier or the one supplied.
      *
