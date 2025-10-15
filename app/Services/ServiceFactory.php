@@ -33,29 +33,14 @@ class ServiceFactory
         return new CategoryService($this->context, $businessId);
     }
 
-    public function inventorySummary(?string $businessId = null): InventorySummaryService
-    {
-        return new InventorySummaryService($this->context, $businessId);
-    }
-
     public function inventory(?string $businessId = null): InventoryService
     {
         return new InventoryService($this->context, $businessId);
     }
 
-    public function variantInventory(?string $businessId = null): VariantInventoryService
-    {
-        return new VariantInventoryService($this->context, $businessId);
-    }
-
     public function catalog(?string $businessId = null): CatalogService
     {
         return new CatalogService($this->context, $businessId);
-    }
-
-    public function catalogProduct(?string $businessId = null): CatalogProductService
-    {
-        return new CatalogProductService($this->context, $businessId);
     }
 
     public function tax(?string $businessId = null): TaxService
@@ -71,11 +56,6 @@ class ServiceFactory
     public function hook(?string $businessId = null): HookService
     {
         return new HookService($this->context, $businessId);
-    }
-
-    public function hookDelivery(?string $businessId = null): HookDeliveryService
-    {
-        return new HookDeliveryService($this->context, $businessId);
     }
 
     public function store(?string $businessId = null): StoreService
@@ -127,17 +107,13 @@ class ServiceFactory
             $this->businessUser($businessId),
             $this->subscription($businessId),
             $this->catalog($businessId),
-            $this->catalogProduct($businessId),
             $this->category($businessId),
             $this->customer($businessId),
-            $this->inventorySummary($businessId),
             $this->inventory($businessId),
-            $this->variantInventory($businessId),
             $this->paylink($businessId),
             $this->product($businessId),
             $this->tax($businessId),
             $this->hook($businessId),
-            $this->hookDelivery($businessId),
             $this->order($businessId),
             $this->transaction($businessId),
         ];

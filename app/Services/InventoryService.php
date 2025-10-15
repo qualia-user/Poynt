@@ -34,11 +34,6 @@ class InventoryService
             return false;
         }
 
-        $storeIds = $this->getStoreIds($businessId);
-        if (empty($storeIds)) {
-            return false;
-        }
-
         $tokenService = new TokenService($this->context);
         $accessToken = $tokenService->getMerchantToken($businessId);
         if (!$accessToken) {
@@ -48,7 +43,34 @@ class InventoryService
             return false;
         }
 
+        $storeIds = $this->getStoreIds($businessId);
         $items = [];
+
+        foreach ($this->fetchSummaryRows($businessId, $accessToken) as $row) {
+            $row['businessId'] = $row['businessId'] ?? $businessId;
+            $row['__resourceType'] = 'summary';
+            $items[] = $row;
+        }
+
+        foreach ($this->fetchInventoryRows($businessId, $accessToken, $storeIds) as $row) {
+            $row['businessId'] = $businessId;
+            $row['__resourceType'] = 'inventory';
+            $items[] = $row;
+        }
+
+        foreach ($this->fetchVariantRows($businessId, $accessToken, $storeIds) as $row) {
+            $row['businessId'] = $businessId;
+            $row['__resourceType'] = 'variant';
+            $items[] = $row;
+        }
+
+        return $items ?: false;
+    }
+
+    private function fetchInventoryRows(string $businessId, string $accessToken, array $storeIds): array
+    {
+        $items = [];
+
         foreach ($storeIds as $storeId) {
             try {
                 $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/inventory', [
@@ -60,43 +82,146 @@ class InventoryService
                     ],
                 ]);
 
-                $data = json_decode($response->getBody(), true);
-                $rows = $this->extractInventoryRows($data);
-                foreach ($rows as $row) {
-                    $row['businessId'] = $businessId;
+                $payload = json_decode($response->getBody(), true);
+                foreach ($this->normalizeInventoryPayload($payload) as $row) {
                     $row['storeId'] = $storeId;
                     $items[] = $row;
                 }
             } catch (GuzzleException $e) {
                 $this->context->getLog()->error(
-                    sprintf('InventoryService::fetchByBusinessId: failed for store %s: %s', $storeId, $e->getMessage())
+                    sprintf('InventoryService::fetchInventoryRows: failed for store %s: %s', $storeId, $e->getMessage())
                 );
             }
         }
 
-        return $items ?: false;
+        return $items;
     }
 
-    private function extractInventoryRows(mixed $data): array
+    private function fetchSummaryRows(string $businessId, string $accessToken): array
     {
-        if (!is_array($data)) {
+        try {
+            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/inventory/summary', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $payload = json_decode($response->getBody(), true);
+            return $this->normalizeSummaryPayload($payload);
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error(
+                'InventoryService::fetchSummaryRows: ' . $e->getMessage()
+            );
+            return [];
+        }
+    }
+
+    private function fetchVariantRows(string $businessId, string $accessToken, array $storeIds): array
+    {
+        $items = [];
+
+        foreach ($storeIds as $storeId) {
+            try {
+                $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/inventory/variants', [
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $accessToken,
+                    ],
+                    'query' => [
+                        'storeId' => $storeId,
+                    ],
+                ]);
+
+                $payload = json_decode($response->getBody(), true);
+                foreach ($this->normalizeVariantPayload($payload) as $row) {
+                    $row['storeId'] = $storeId;
+                    $items[] = $row;
+                }
+            } catch (GuzzleException $e) {
+                $this->context->getLog()->error(
+                    sprintf('InventoryService::fetchVariantRows: failed for store %s: %s', $storeId, $e->getMessage())
+                );
+            }
+        }
+
+        return $items;
+    }
+
+    private function normalizeInventoryPayload(mixed $payload): array
+    {
+        if (!is_array($payload)) {
             return [];
         }
 
-        if (isset($data['inventory'])) {
-            $data = $data['inventory'];
+        if (isset($payload['inventory']) && is_array($payload['inventory'])) {
+            $payload = $payload['inventory'];
         }
 
-        if (!is_array($data)) {
+        if (!is_array($payload)) {
             return [];
         }
 
-        if (array_is_list($data)) {
-            return $data;
+        if (array_is_list($payload)) {
+            return $payload;
         }
 
         $rows = [];
-        foreach ($data as $value) {
+        foreach ($payload as $value) {
+            if (is_array($value)) {
+                $rows[] = $value;
+            }
+        }
+
+        return $rows;
+    }
+
+    private function normalizeSummaryPayload(mixed $payload): array
+    {
+        if (!is_array($payload)) {
+            return [];
+        }
+
+        if (isset($payload['inventorySummary']) && is_array($payload['inventorySummary'])) {
+            $payload = $payload['inventorySummary'];
+        }
+
+        if (!is_array($payload)) {
+            return [];
+        }
+
+        if (array_is_list($payload)) {
+            return $payload;
+        }
+
+        $rows = [];
+        foreach ($payload as $value) {
+            if (is_array($value)) {
+                $rows[] = $value;
+            }
+        }
+
+        return $rows;
+    }
+
+    private function normalizeVariantPayload(mixed $payload): array
+    {
+        if (!is_array($payload)) {
+            return [];
+        }
+
+        if (isset($payload['variantInventory']) && is_array($payload['variantInventory'])) {
+            $payload = $payload['variantInventory'];
+        }
+
+        if (!is_array($payload)) {
+            return [];
+        }
+
+        if (array_is_list($payload)) {
+            return $payload;
+        }
+
+        $rows = [];
+        foreach ($payload as $value) {
             if (is_array($value)) {
                 $rows[] = $value;
             }
@@ -140,9 +265,21 @@ class InventoryService
 
     public function upsert(array $inventoryData): bool
     {
+        $type = $inventoryData['__resourceType'] ?? 'inventory';
+        unset($inventoryData['__resourceType']);
+
+        return match ($type) {
+            'summary' => $this->upsertSummary($inventoryData),
+            'variant' => $this->upsertVariant($inventoryData),
+            default   => $this->upsertInventory($inventoryData),
+        };
+    }
+
+    private function upsertInventory(array $inventoryData): bool
+    {
         if (!isset($inventoryData['businessId'], $inventoryData['storeId'], $inventoryData['productId'])) {
             $this->context->getLog()->error(
-                'InventoryService::upsert: missing required inventory fields (businessId, storeId, productId)'
+                'InventoryService::upsertInventory: missing required fields (businessId, storeId, productId)'
             );
             return false;
         }
@@ -177,27 +314,147 @@ class InventoryService
             NOW(),
             NOW()
         ) ON CONFLICT (business_id, store_id, product_id) DO UPDATE SET
-            on_hand       = EXCLUDED.on_hand,
-            reserved      = EXCLUDED.reserved,
+            on_hand        = EXCLUDED.on_hand,
+            reserved       = EXCLUDED.reserved,
             updated_at_ext = EXCLUDED.updated_at_ext,
-            payload       = EXCLUDED.payload,
-            updated_at    = EXCLUDED.updated_at
+            payload        = EXCLUDED.payload,
+            updated_at     = EXCLUDED.updated_at
         SQL;
 
         try {
             $this->context->getConn()->executeStatement($sql, [
-                'businessId'  => $businessId,
-                'storeId'     => $storeId,
-                'productId'   => $productId,
-                'onHand'      => $onHand,
-                'reserved'    => $reserved,
-                'updatedAtExt'=> $updatedAtExt,
-                'payload'     => $payload,
+                'businessId'   => $businessId,
+                'storeId'      => $storeId,
+                'productId'    => $productId,
+                'onHand'       => $onHand,
+                'reserved'     => $reserved,
+                'updatedAtExt' => $updatedAtExt,
+                'payload'      => $payload,
             ]);
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
-                'InventoryService::upsert: database error: ' . $e->getMessage()
+                'InventoryService::upsertInventory: database error: ' . $e->getMessage()
+            );
+            return false;
+        }
+    }
+
+    private function upsertSummary(array $summaryData): bool
+    {
+        if (!isset($summaryData['businessId'], $summaryData['productId'])) {
+            $this->context->getLog()->error(
+                'InventoryService::upsertSummary: missing required fields (businessId, productId)'
+            );
+            return false;
+        }
+
+        $businessId = $summaryData['businessId'];
+        $productId = $summaryData['productId'];
+        $totalOnHand = Format::optionalNumericString($summaryData['totalOnHand'] ?? $summaryData['quantityOnHand'] ?? null);
+        $totalReserved = Format::optionalNumericString($summaryData['totalReserved'] ?? $summaryData['quantityReserved'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($summaryData['updatedAt'] ?? null);
+        $payload = Format::jsonObject($summaryData);
+        $now = (new \DateTimeImmutable('now'))->format('Y-m-d H:i:sP');
+
+        try {
+            $this->context->getConn()->executeStatement(
+                'INSERT INTO inventory_summary (
+                    business_id, product_id, total_on_hand, total_reserved, updated_at_ext,
+                    payload, created_at, updated_at
+                ) VALUES (
+                    :businessId, :productId, :totalOnHand, :totalReserved, :updatedAtExt,
+                    :payload, :createdAt, :updatedAt
+                ) ON CONFLICT (business_id, product_id) DO UPDATE SET
+                    total_on_hand = EXCLUDED.total_on_hand,
+                    total_reserved = EXCLUDED.total_reserved,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    payload = EXCLUDED.payload,
+                    updated_at = EXCLUDED.updated_at',
+                [
+                    'businessId'   => $businessId,
+                    'productId'    => $productId,
+                    'totalOnHand'  => $totalOnHand,
+                    'totalReserved'=> $totalReserved,
+                    'updatedAtExt' => $updatedAtExt,
+                    'payload'      => $payload,
+                    'createdAt'    => $now,
+                    'updatedAt'    => $now,
+                ]
+            );
+            return true;
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                'InventoryService::upsertSummary: database error: ' . $e->getMessage()
+            );
+            return false;
+        }
+    }
+
+    private function upsertVariant(array $variantData): bool
+    {
+        if (!isset($variantData['businessId'], $variantData['storeId'], $variantData['productId'], $variantData['variantId'])) {
+            $this->context->getLog()->error(
+                'InventoryService::upsertVariant: missing required fields (businessId, storeId, productId, variantId)'
+            );
+            return false;
+        }
+
+        $businessId = $variantData['businessId'];
+        $storeId = $variantData['storeId'];
+        $productId = $variantData['productId'];
+        $variantId = $variantData['variantId'];
+        $onHand = Format::optionalNumericString($variantData['onHand'] ?? $variantData['quantityOnHand'] ?? null);
+        $reserved = Format::optionalNumericString($variantData['reserved'] ?? $variantData['quantityReserved'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($variantData['updatedAt'] ?? null);
+        $payload = Format::jsonObject($variantData);
+
+        $sql = <<<SQL
+        INSERT INTO variant_inventory (
+            business_id,
+            store_id,
+            product_id,
+            variant_id,
+            on_hand,
+            reserved,
+            updated_at_ext,
+            payload,
+            created_at,
+            updated_at
+        ) VALUES (
+            :businessId,
+            :storeId,
+            :productId,
+            :variantId,
+            :onHand,
+            :reserved,
+            :updatedAtExt,
+            :payload,
+            NOW(),
+            NOW()
+        ) ON CONFLICT (business_id, store_id, product_id, variant_id) DO UPDATE SET
+            on_hand        = EXCLUDED.on_hand,
+            reserved       = EXCLUDED.reserved,
+            updated_at_ext = EXCLUDED.updated_at_ext,
+            payload        = EXCLUDED.payload,
+            updated_at     = EXCLUDED.updated_at
+        SQL;
+
+        try {
+            $this->context->getConn()->executeStatement($sql, [
+                'businessId'   => $businessId,
+                'storeId'      => $storeId,
+                'productId'    => $productId,
+                'variantId'    => $variantId,
+                'onHand'       => $onHand,
+                'reserved'     => $reserved,
+                'updatedAtExt' => $updatedAtExt,
+                'payload'      => $payload,
+            ]);
+            return true;
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                'InventoryService::upsertVariant: database error: ' . $e->getMessage()
             );
             return false;
         }
