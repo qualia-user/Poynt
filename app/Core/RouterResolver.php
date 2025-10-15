@@ -13,7 +13,11 @@ class RouterResolver implements Phroute\Phroute\HandlerResolverInterface
         $this->container = $container;
     }
 
-    public function resolve(array|callable $handler): array|callable
+    /**
+     * @param callable|array $handler
+     * @return callable|array
+     */
+    public function resolve($handler)
     {
         if (is_array($handler) && is_string($handler[0])) {
             $handler[0] = $this->container->get($handler[0]);
