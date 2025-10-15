@@ -4,14 +4,66 @@ namespace App\Services;
 
 use App\Core\Context;
 use App\Services\Support\PoyntDataFormatter as Format;
+use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\GuzzleException;
 
 class OrderService
 {
-    private Context $context;
+    private const POYNT_ENDPOINT = 'https://services.poynt.net/businesses';
 
-    public function __construct(Context $context)
+    private Context $context;
+    private ClientInterface $httpClient;
+    private ?string $businessId = null;
+
+    public function __construct(Context $context, ?string $businessId = null, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
+        $this->httpClient = $httpClient ?? $context->getHttpClient();
+        if ($businessId !== null) {
+            $this->businessId = $businessId;
+        }
+    }
+
+    public function fetchByBusinessId(?string $businessId = null): array|false
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if (!$businessId) {
+            return false;
+        }
+
+        $tokenService = new TokenService($this->context);
+        $accessToken = $tokenService->getMerchantToken($businessId);
+
+        if (!$accessToken) {
+            $this->context->getLog()->warning(
+                sprintf('OrderService::fetchByBusinessId: missing merchant token for business %s', $businessId)
+            );
+            return false;
+        }
+
+        try {
+            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/orders', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $data = json_decode($response->getBody(), true);
+            if (isset($data['orders']) && is_array($data['orders'])) {
+                return $data['orders'];
+            }
+
+            return is_array($data) ? $data : false;
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error(
+                sprintf('OrderService::fetchByBusinessId: %s', $e->getMessage())
+            );
+
+            return false;
+        }
     }
 
     /**

@@ -25,9 +25,15 @@ class SubscriptionService
     private const DEFAULT_TRIAL_DAYS = 14;
     private Context $context;
     private ClientInterface $http;
-    private mixed $storeId;
+    private ?string $businessId = null;
+    private ?string $storeId = null;
 
-    public function __construct(Context $context, $storeId = null, ?ClientInterface $httpClient = null)
+    public function __construct(
+        Context $context,
+        ?string $businessId = null,
+        ?string $storeId = null,
+        ?ClientInterface $httpClient = null
+    )
     {
         $this->context = $context;
         if ($httpClient !== null) {
@@ -39,9 +45,8 @@ class SubscriptionService
             ]);
         }
 
-        if (!is_null($storeId)) {
-            $this->storeId = $storeId;
-        }
+        $this->businessId = $businessId;
+        $this->storeId = $storeId;
     }
 
     /**
@@ -379,6 +384,8 @@ class SubscriptionService
         $appId = 'urn:aid:' . ConfigApp::$appId;
         $endpoint = "/{$orgId}/apps/{$appId}/subscriptions";
 
+        $respList = [];
+
         try {
             $response = $this->http->get($endpoint, [
                 'headers' => [
@@ -389,7 +396,10 @@ class SubscriptionService
                     'businessId' => $businessId,
                 ],
             ]);
-            $respList = json_decode((string)$response->getBody(), true);
+            $decoded = json_decode((string)$response->getBody(), true);
+            if (is_array($decoded)) {
+                $respList = $decoded;
+            }
         } catch (RequestException $e) {
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()
@@ -405,6 +415,70 @@ class SubscriptionService
         }
 
         return $respList;
+    }
+
+    /**
+     * Fetch subscription data for onboarding by business identifier.
+     */
+    public function fetchByBusinessId(?string $businessId = null): array|false
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if (!$businessId) {
+            return false;
+        }
+
+        $tokenService = new TokenService($this->context);
+
+        try {
+            $appToken = $tokenService->getAppToken($businessId);
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'SubscriptionService::fetchByBusinessId: failed to load app token for business %s: %s',
+                    $businessId,
+                    $e->getMessage()
+                )
+            );
+            return false;
+        }
+
+        if (!is_string($appToken) || $appToken === '') {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'SubscriptionService::fetchByBusinessId: no app token stored for business %s',
+                    $businessId
+                )
+            );
+            return false;
+        }
+
+        $subscriptions = $this->fetchSubscriptions($appToken, $businessId);
+
+        return $subscriptions ?: false;
+    }
+
+    /**
+     * Onboarding-compatible upsert wrapper.
+     */
+    public function upsert(array $subscriptionData): bool
+    {
+        try {
+            $this->upsertLocalSubscription($subscriptionData);
+            return true;
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'SubscriptionService::upsert: failed for subscription %s: %s',
+                    $subscriptionData['subscriptionId'] ?? 'unknown',
+                    $e->getMessage()
+                )
+            );
+
+            return false;
+        }
     }
 
 // ────────────────────────────────────────────────────────────────────────────

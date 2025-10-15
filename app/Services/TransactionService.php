@@ -13,11 +13,60 @@ class TransactionService
 
     private Context $context;
     private ClientInterface $httpClient;
+    private ?string $businessId = null;
 
-    public function __construct(Context $context, ?ClientInterface $httpClient = null)
+    public function __construct(Context $context, ?string $businessId = null, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
         $this->httpClient = $httpClient ?? $context->getHttpClient();
+        if ($businessId !== null) {
+            $this->businessId = $businessId;
+        }
+    }
+
+    public function fetchByBusinessId(?string $businessId = null, ?string $accessTokenOverride = null): array|false
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if (!$businessId) {
+            return false;
+        }
+
+        $tokenService = new TokenService($this->context);
+        $accessToken = $accessTokenOverride;
+        if ($accessToken === null) {
+            $accessToken = $tokenService->getMerchantToken($businessId);
+        }
+
+        if (!$accessToken) {
+            $this->context->getLog()->warning(
+                sprintf('TransactionService::fetchByBusinessId: missing merchant token for business %s', $businessId)
+            );
+            return false;
+        }
+
+        try {
+            $url = self::POYNT_ENDPOINT . '/' . $businessId . '/transactions';
+            $response = $this->httpClient->get($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $data = json_decode($response->getBody(), true);
+            if (!is_array($data) || !isset($data['transactions']) || !is_array($data['transactions'])) {
+                return false;
+            }
+
+            return $data['transactions'];
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error(
+                sprintf('TransactionService::fetchByBusinessId: %s', $e->getMessage())
+            );
+            return false;
+        }
     }
 
     /**
@@ -35,6 +84,10 @@ class TransactionService
                 'TransactionService::upsert: missing required fields id or businessId'
             );
             return false;
+        }
+
+        if ($receiptData === null && isset($transactionData['receipt']) && is_array($transactionData['receipt'])) {
+            $receiptData = $transactionData['receipt'];
         }
 
         $transactionId = $transactionData['id'];
@@ -216,28 +269,17 @@ class TransactionService
      */
     public function fetchAndStore(string $accessToken, string $businessId): bool
     {
-        try {
-            $url = self::POYNT_ENDPOINT . '/' . $businessId . '/transactions';
-            $response = $this->httpClient->get($url, [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $accessToken,
-                ],
-            ]);
+        $transactions = $this->fetchByBusinessId($businessId, $accessToken);
 
-            $data = json_decode($response->getBody(), true);
-            if (!$data || !isset($data['transactions'])) {
-                return false;
-            }
-
-            foreach ($data['transactions'] as $transaction) {
-                $this->upsert($transaction, $transaction['receipt'] ?? null);
-            }
-
-            return true;
-        } catch (GuzzleException $e) {
-            $this->context->getLog()->error('TransactionService::fetchAndStore: ' . $e->getMessage());
+        if (!is_array($transactions)) {
             return false;
         }
+
+        foreach ($transactions as $transaction) {
+            $this->upsert($transaction, $transaction['receipt'] ?? null);
+        }
+
+        return true;
     }
 }
 
