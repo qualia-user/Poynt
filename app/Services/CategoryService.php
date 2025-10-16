@@ -44,21 +44,195 @@ class CategoryService
         }
 
         try {
-            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/categories', [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $accessToken,
-                ],
-            ]);
-
-            $data = json_decode($response->getBody(), true);
-            if (is_array($data)) {
-                return $data;
+            $catalogs = $this->fetchCatalogs($businessId, $accessToken);
+            if ($catalogs === null) {
+                return false;
             }
+
+            $categories = $this->collectCategories($businessId, $accessToken, $catalogs);
+
+            return array_values($categories);
         } catch (GuzzleException $e) {
             $this->context->getLog()->error('CategoryService::fetchByBusinessId: ' . $e->getMessage());
         }
 
         return false;
+    }
+
+    /**
+     * @return array|null
+     */
+    private function fetchCatalogs(string $businessId, string $accessToken): ?array
+    {
+        $catalogs = [];
+        $nextUrl = $this->buildCatalogsUrl($businessId);
+
+        $visited = [];
+
+        while ($nextUrl !== null) {
+            if (isset($visited[$nextUrl])) {
+                break;
+            }
+            $visited[$nextUrl] = true;
+
+            $response = $this->httpClient->get($nextUrl, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $body = (string) $response->getBody();
+            $data = json_decode($body, true);
+
+            if ($data === null && trim($body) === '') {
+                break;
+            }
+
+            if (!is_array($data)) {
+                return null;
+            }
+
+            $catalogs = array_merge($catalogs, $this->extractCatalogs($data));
+            $nextUrl = $this->resolveNextCatalogUrl($data, $businessId);
+        }
+
+        return $catalogs;
+    }
+
+    private function buildCatalogsUrl(string $businessId): string
+    {
+        return sprintf('%s/%s/catalogs', self::POYNT_ENDPOINT, $businessId);
+    }
+
+    private function resolveNextCatalogUrl(array $payload, string $businessId): ?string
+    {
+        $candidates = [
+            $payload['links']['next'] ?? null,
+            $payload['paging']['next'] ?? null,
+            $payload['next'] ?? null,
+            $payload['nextPage'] ?? null,
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && $candidate !== '') {
+                if (str_starts_with($candidate, 'http')) {
+                    return $candidate;
+                }
+
+                if (str_starts_with($candidate, '/')) {
+                    return rtrim(self::POYNT_ENDPOINT, '/') . $candidate;
+                }
+
+                if (str_starts_with($candidate, '?')) {
+                    return $this->buildCatalogsUrl($businessId) . $candidate;
+                }
+
+                if (!str_contains($candidate, '/') && str_contains($candidate, '=')) {
+                    return $this->buildCatalogsUrl($businessId) . '?' . $candidate;
+                }
+
+                return sprintf('%s/%s', $this->buildCatalogsUrl($businessId), ltrim($candidate, '/'));
+            }
+        }
+
+        return null;
+    }
+
+    private function extractCatalogs(array $payload): array
+    {
+        if (isset($payload['catalogs']) && is_array($payload['catalogs'])) {
+            return $payload['catalogs'];
+        }
+
+        if (isset($payload['items']) && is_array($payload['items'])) {
+            return $payload['items'];
+        }
+
+        if (isset($payload['results']) && is_array($payload['results'])) {
+            return $payload['results'];
+        }
+
+        if (array_is_list($payload)) {
+            return $payload;
+        }
+
+        return [];
+    }
+
+    private function collectCategories(string $businessId, string $accessToken, array $catalogs): array
+    {
+        $categories = [];
+
+        foreach ($catalogs as $catalog) {
+            if (!is_array($catalog)) {
+                continue;
+            }
+
+            $catalogId = $catalog['id'] ?? null;
+            $catalogCategories = [];
+
+            if (isset($catalog['categories']) && is_array($catalog['categories'])) {
+                $catalogCategories = $catalog['categories'];
+            }
+
+            if (empty($catalogCategories) && $catalogId !== null) {
+                $catalogCategories = $this->fetchCatalogCategories($businessId, $catalogId, $accessToken);
+            }
+
+            foreach ($catalogCategories as $category) {
+                if (!is_array($category) || !isset($category['id'])) {
+                    continue;
+                }
+
+                $categoryId = $category['id'];
+
+                if (!isset($category['businessId'])) {
+                    $category['businessId'] = $businessId;
+                }
+
+                $categories[$categoryId] = $category;
+            }
+        }
+
+        return $categories;
+    }
+
+    private function fetchCatalogCategories(string $businessId, string $catalogId, string $accessToken): array
+    {
+        try {
+            $response = $this->httpClient->get(sprintf(
+                '%s/%s/catalogs/%s/full',
+                self::POYNT_ENDPOINT,
+                $businessId,
+                $catalogId
+            ), [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $data = json_decode((string) $response->getBody(), true);
+            if (!is_array($data)) {
+                return [];
+            }
+
+            if (isset($data['catalog']['categories']) && is_array($data['catalog']['categories'])) {
+                return $data['catalog']['categories'];
+            }
+
+            if (isset($data['categories']) && is_array($data['categories'])) {
+                return $data['categories'];
+            }
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CategoryService::fetchCatalogCategories: %s',
+                    $e->getMessage()
+                )
+            );
+        }
+
+        return [];
     }
 
     public function upsert(array $categoryData): bool
