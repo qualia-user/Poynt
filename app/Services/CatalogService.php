@@ -85,6 +85,10 @@ class CatalogService
             if (!empty($products)) {
                 $this->syncCatalogProducts($catalogId, $products);
             }
+            $availableDiscounts = $this->resolveCatalogAvailableDiscounts($catalogData);
+            if (!empty($availableDiscounts)) {
+                $this->syncCatalogAvailableDiscounts($catalogId, $availableDiscounts);
+            }
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
@@ -202,6 +206,22 @@ class CatalogService
         return [];
     }
 
+    private function resolveCatalogAvailableDiscounts(array $catalogData): array
+    {
+        if (isset($catalogData['availableDiscounts']) && is_array($catalogData['availableDiscounts'])) {
+            return $catalogData['availableDiscounts'];
+        }
+
+        if (isset($catalogData['catalog']) && is_array($catalogData['catalog'])) {
+            $innerCatalog = $catalogData['catalog'];
+            if (isset($innerCatalog['availableDiscounts']) && is_array($innerCatalog['availableDiscounts'])) {
+                return $innerCatalog['availableDiscounts'];
+            }
+        }
+
+        return [];
+    }
+
     private function syncCatalogProducts(string $catalogId, array $products): void
     {
         foreach ($products as $product) {
@@ -237,6 +257,51 @@ class CatalogService
             } catch (\Throwable $e) {
                 $this->context->getLog()->error(
                     sprintf('CatalogService::syncCatalogProducts: failed for catalog %s product %s: %s', $catalogId, $product['id'], $e->getMessage())
+                );
+            }
+        }
+    }
+
+    private function syncCatalogAvailableDiscounts(string $catalogId, array $availableDiscounts): void
+    {
+        foreach ($availableDiscounts as $discount) {
+            $discountId = null;
+            $payloadSource = $discount;
+
+            if (is_array($discount)) {
+                $discountId = $discount['id'] ?? $discount['discountId'] ?? null;
+            } elseif (is_string($discount) || is_int($discount)) {
+                $discountId = (string) $discount;
+                $payloadSource = ['id' => $discountId];
+            }
+
+            if ($discountId === null || $discountId === '') {
+                continue;
+            }
+
+            $payload = Format::jsonObject($payloadSource);
+
+            try {
+                $this->context->getConn()->executeStatement(
+                    'INSERT INTO catalog_available_discount (
+                        catalog_id,
+                        discount_id,
+                        payload
+                    ) VALUES (
+                        :catalogId,
+                        :discountId,
+                        :payload
+                    ) ON CONFLICT (catalog_id, discount_id) DO UPDATE SET
+                        payload  = EXCLUDED.payload',
+                    [
+                        'catalogId' => $catalogId,
+                        'discountId' => $discountId,
+                        'payload'   => $payload,
+                    ]
+                );
+            } catch (\Throwable $e) {
+                $this->context->getLog()->error(
+                    sprintf('CatalogService::syncCatalogAvailableDiscounts: failed for catalog %s discount %s: %s', $catalogId, $discountId, $e->getMessage())
                 );
             }
         }
