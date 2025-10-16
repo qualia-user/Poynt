@@ -54,6 +54,7 @@ class CallbackService
         $businessId = $handler->getBusinessId();
         $storeId = $handler->getStoreId();
 
+        // TODO
         $this->startTrialIfMissing($businessId, $storeId);
 
         if ($businessId) {

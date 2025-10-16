@@ -85,6 +85,7 @@ class BusinessUserService
                     raw_payload = EXCLUDED.raw_payload,
                     created_at_ext = EXCLUDED.created_at_ext,
                     updated_at_ext = EXCLUDED.updated_at_ext,
+                    created_at = EXCLUDED.created_at,
                     updated_at = EXCLUDED.updated_at',
                 [
                     'businessId' => $businessId,
