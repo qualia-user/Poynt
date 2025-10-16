@@ -7,6 +7,7 @@ use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use App\Core\Context;
 use App\Services\OrderService;
+use function str_starts_with;
 
 class MerchantFetcher
 {
@@ -16,6 +17,7 @@ class MerchantFetcher
     const POYNT_ENDPOINT_API = 'https://services.poynt.net/businesses';
     const POYNT_ENDPOINT_GET_BUSINESS = 'https://services.poynt.net/businesses';
     const POYNT_ENDPOINT_GET_ORDERS = 'https://services.poynt.net/businesses';
+    private const POYNT_BILLING_BASE = 'https://billing.poynt.net/apps';
 
     public function __construct(Context $context, ?ClientInterface $httpClient = null)
     {
@@ -34,11 +36,10 @@ class MerchantFetcher
     public function fetchApplicationSubscriptionPlans(string $accessToken): ?array
     {
         try {
-            $orgId = ConfigApp::$orgId;
             $appId = ConfigApp::$appId;
 
             // Define the endpoint for fetching plans
-            $url = "https://billing.poynt.net/organizations/{$orgId}/apps/{$appId}/plans";
+            $url = $this->buildBillingUrl($appId, 'plans');
 
             // Set up request headers
             $options = [
@@ -172,7 +173,7 @@ class MerchantFetcher
             $appId = ConfigApp::$appId;
 
             // Define the endpoint
-            $url = "https://billing.poynt.net/organizations/{$orgId}/apps/{$appId}/subscriptions";
+            $url = $this->buildBillingUrl($appId, 'subscriptions');
 
             // Prepare request body
             $payload = [
@@ -226,7 +227,7 @@ class MerchantFetcher
             $appId = ConfigApp::$appId;
 
             // Define the API endpoint
-            $url = "https://billing.poynt.net/organizations/{$orgId}/apps/{$appId}/subscriptions/{$subscriptionId}";
+            $url = $this->buildBillingUrl($appId, 'subscriptions/' . $subscriptionId);
 
             // Set up request options
             $options = [
@@ -265,11 +266,10 @@ class MerchantFetcher
         ?string $status = null
     ): ?array {
         try {
-            $orgId = ConfigApp::$orgId;
             $appId = ConfigApp::$appId;
 
             // Define the base endpoint
-            $url = "https://billing.poynt.net/organizations/{$orgId}/apps/{$appId}/subscriptions";
+            $url = $this->buildBillingUrl($appId, 'subscriptions');
 
             // Prepare query parameters
             $queryParams = [
@@ -311,7 +311,6 @@ class MerchantFetcher
     }
 
 
-
     public function fetchSubscriptionStatus(string $accessToken, string $businessId): ?array
     {
         try {
@@ -334,5 +333,13 @@ class MerchantFetcher
         }
     }
 
+    private function buildBillingUrl(string $appId, string $resource = ''): string
+    {
+        $base = rtrim(self::POYNT_BILLING_BASE, '/');
+        $appUrn = str_starts_with($appId, 'urn:aid:') ? $appId : 'urn:aid:' . $appId;
+        $resourcePath = ltrim($resource, '/');
+        $suffix = $resourcePath === '' ? '' : '/' . $resourcePath;
 
+        return sprintf('%s/%s%s', $base, $appUrn, $suffix);
+    }
 }
