@@ -162,7 +162,9 @@ class CallbackService
             return;
         }
 
-        foreach ($this->normalizeResourceItems($raw) as $item) {
+        $normalized = $this->normalizeResourceItems($raw);
+
+        foreach ($normalized['items'] as $item) {
             if (!is_array($item)) {
                 continue;
             }
@@ -179,17 +181,46 @@ class CallbackService
                 );
             }
         }
+
+        $this->recordResourceLinks($service, $businessId, $normalized['links']);
     }
 
+    /**
+     * Split a mixed resource payload into a list of entity payloads and pagination links.
+     *
+     * @param array $raw
+     * @return array{items: array<int, array<mixed>>, links: array<int, array<mixed>>}
+     */
     private function normalizeResourceItems(array $raw): array
     {
+        $items = [];
+        $links = [];
+
         if (array_is_list($raw)) {
-            return $raw;
+            foreach ($raw as $value) {
+                if (is_array($value)) {
+                    $items[] = $value;
+                }
+            }
+
+            return [
+                'items' => $items,
+                'links' => $links,
+            ];
         }
 
-        $items = [];
-        foreach ($raw as $value) {
+        foreach ($raw as $key => $value) {
             if (!is_array($value)) {
+                continue;
+            }
+
+            if ($key === 'links') {
+                foreach ($value as $link) {
+                    if (is_array($link)) {
+                        $links[] = $link;
+                    }
+                }
+
                 continue;
             }
 
@@ -205,6 +236,30 @@ class CallbackService
             $items[] = $value;
         }
 
-        return $items;
+        return [
+            'items' => $items,
+            'links' => $links,
+        ];
+    }
+
+    private function recordResourceLinks(object $service, string $businessId, array $links): void
+    {
+        if (empty($links)) {
+            return;
+        }
+
+        $resourceClass = get_class($service);
+
+        $this->context->getLog()->info(
+            sprintf(
+                'CallbackService::syncResourceCollection: captured %d pagination link(s) for %s',
+                count($links),
+                $resourceClass
+            ),
+            [
+                'businessId' => $businessId,
+                'links' => $links,
+            ]
+        );
     }
 }
