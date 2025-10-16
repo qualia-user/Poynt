@@ -18,10 +18,11 @@ use GuzzleHttp\Exception\RequestException;
 use JsonException;
 use Ramsey\Uuid\Uuid;
 use RuntimeException;
+use function str_starts_with;
 
 class SubscriptionService
 {
-    public const POYNT_BILLING_BASE = 'https://billing.poynt.net/organizations';
+    public const POYNT_BILLING_BASE = 'https://billing.poynt.net/apps';
     private const DEFAULT_TRIAL_DAYS = 14;
     private Context $context;
     private ClientInterface $http;
@@ -59,7 +60,7 @@ class SubscriptionService
     public function fetchPlans(string $appAccessToken): ?array
     {
         try {
-            $response = $this->http->get(self::POYNT_BILLING_BASE . '/' . ConfigApp::$orgId . '/apps/urn:aid:' . ConfigApp::$appId . '/plans', [
+            $response = $this->http->get($this->buildAppResourceUrl('plans'), [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $appAccessToken,
                     'Accept'        => 'application/json',
@@ -115,9 +116,7 @@ class SubscriptionService
         ?string $deviceId = null,
         ?string $status = null
     ): ?array {
-        $orgId = ConfigApp::$orgId;
-        $appId = 'urn:aid:' . ConfigApp::$appId;
-        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions";
+        $endpoint = $this->buildAppResourceUrl('subscriptions');
 
         $query = ['businessId' => $businessId];
         if ($storeId) {
@@ -324,8 +323,7 @@ class SubscriptionService
         ?string     $startAt = null
     ): array {
         $orgId = ConfigApp::$orgId;
-        $appId = 'urn:aid:' . ConfigApp::$appId;
-        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions";
+        $endpoint = $this->buildAppResourceUrl('subscriptions');
 
         // If startAt is not provided, use current UTC
         $timestamp = $startAt
@@ -381,8 +379,7 @@ class SubscriptionService
         string $businessId
     ): array {
         $orgId = ConfigApp::$orgId;
-        $appId = 'urn:aid:' . ConfigApp::$appId;
-        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions";
+        $endpoint = $this->buildAppResourceUrl('subscriptions');
 
         $respList = [];
 
@@ -497,9 +494,7 @@ class SubscriptionService
         string $appAccessToken,
         string $subscriptionId
     ): array {
-        $orgId = ConfigApp::$orgId;
-        $appId = 'urn:aid:' . ConfigApp::$appId;
-        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions/{$subscriptionId}";
+        $endpoint = $this->buildAppResourceUrl('subscriptions/' . $subscriptionId);
 
         try {
             $response = $this->http->delete($endpoint, [
@@ -692,4 +687,21 @@ class SubscriptionService
         }
     }
 
+    private function getAppUrn(): string
+    {
+        $appId = ConfigApp::$appId ?? '';
+
+        return str_starts_with($appId, 'urn:aid:') ? $appId : 'urn:aid:' . $appId;
+    }
+
+    private function buildAppResourceUrl(string $resource = ''): string
+    {
+        $appUrn = $this->getAppUrn();
+        $base = rtrim(self::POYNT_BILLING_BASE, '/');
+
+        $resourcePath = ltrim($resource, '/');
+        $suffix = $resourcePath === '' ? '' : '/' . $resourcePath;
+
+        return sprintf('%s/%s%s', $base, $appUrn, $suffix);
+    }
 }
