@@ -473,7 +473,9 @@ CREATE TABLE tax (
   active          BOOLEAN,
   raw_payload     JSONB NOT NULL DEFAULT '{}',
   created_at_ext  TIMESTAMPTZ,
-  updated_at_ext  TIMESTAMPTZ
+  updated_at_ext  TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_tax_business ON tax(business_id, active);
 
