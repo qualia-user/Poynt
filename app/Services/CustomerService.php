@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -38,34 +39,60 @@ class CustomerService
             return false;
         }
 
-        $customerId = $customerData['id'];
-        $businessId = $customerData['businessId'];
-        $name = $customerData['name'] ?? null;
-
-        $metadata = json_encode($customerData);
-        if ($metadata === false) {
+        if (!is_numeric($customerData['id'])) {
             $this->context->getLog()->error(
-                "CustomerService::upsert: failed to json_encode customerData for customer_id={$customerId}"
+                'CustomerService::upsert: customer id must be numeric to fit BIGINT column'
             );
             return false;
         }
+
+        $customerId = (int) $customerData['id'];
+        $businessId = $customerData['businessId'];
+        $firstName = $customerData['firstName'] ?? $customerData['givenName'] ?? null;
+        $lastName = $customerData['lastName'] ?? $customerData['familyName'] ?? null;
+        $emailsJson = Format::jsonArray($customerData['emails'] ?? $customerData['emailAddresses'] ?? []);
+        $phonesJson = Format::jsonArray($customerData['phoneNumbers'] ?? $customerData['phones'] ?? []);
+        $attributes = Format::jsonObject($customerData['attributes'] ?? $customerData['customAttributes'] ?? []);
+        $rawPayload = Format::jsonObject($customerData);
+        $createdAtExt = Format::optionalTimestamp($customerData['createdAt'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($customerData['updatedAt'] ?? null);
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
             $this->context->getConn()->executeStatement(
-                'INSERT INTO customer (customer_id, business_id, name, metadata, created_at, updated_at)
-                 VALUES (:customerId, :businessId, :name, :metadata, :createdAt, :updatedAt)
-                 ON CONFLICT (customer_id) DO UPDATE SET
-                     business_id = EXCLUDED.business_id,
-                     name = EXCLUDED.name,
-                     metadata = EXCLUDED.metadata,
-                     updated_at = EXCLUDED.updated_at',
+                'INSERT INTO customer (
+                    customer_id, business_id, first_name, last_name,
+                    emails_json, phones_json, attributes, raw_payload,
+                    created_at_ext, updated_at_ext,
+                    created_at, updated_at
+                ) VALUES (
+                    :customerId, :businessId, :firstName, :lastName,
+                    :emailsJson, :phonesJson, :attributes, :rawPayload,
+                    :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
+                ) ON CONFLICT (customer_id) DO UPDATE SET
+                    business_id = EXCLUDED.business_id,
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
+                    emails_json = EXCLUDED.emails_json,
+                    phones_json = EXCLUDED.phones_json,
+                    attributes = EXCLUDED.attributes,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    updated_at = EXCLUDED.updated_at',
                 [
                     'customerId' => $customerId,
                     'businessId' => $businessId,
-                    'name' => $name,
-                    'metadata' => $metadata,
+                    'firstName' => $firstName,
+                    'lastName' => $lastName,
+                    'emailsJson' => $emailsJson,
+                    'phonesJson' => $phonesJson,
+                    'attributes' => $attributes,
+                    'rawPayload' => $rawPayload,
+                    'createdAtExt' => $createdAtExt,
+                    'updatedAtExt' => $updatedAtExt,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]

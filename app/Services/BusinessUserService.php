@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -31,41 +32,73 @@ class BusinessUserService
      */
     public function upsert(array $userData): bool
     {
-        if (!isset($userData['id'], $userData['businessId'])) {
+        if (!isset($userData['businessId'])) {
             $this->context->getLog()->error(
-                'BusinessUserService::upsert: missing required fields (id or businessId)'
+                'BusinessUserService::upsert: missing required field businessId'
             );
             return false;
         }
 
-        $userId = $userData['id'];
+        $userIdRaw = $userData['userId'] ?? $userData['id'] ?? null;
+        $userId = Format::optionalInt($userIdRaw);
+        if ($userId === null) {
+            $this->context->getLog()->error('BusinessUserService::upsert: user id must be numeric');
+            return false;
+        }
         $businessId = $userData['businessId'];
-        $name = $userData['name'] ?? null;
+        $firstName = $userData['firstName'] ?? ($userData['name']['first'] ?? null);
+        $lastName = $userData['lastName'] ?? ($userData['name']['last'] ?? null);
 
-        $metadata = json_encode($userData);
-        if ($metadata === false) {
-            $this->context->getLog()->error(
-                "BusinessUserService::upsert: failed to json_encode userData for business_user_id={$userId}"
-            );
-            return false;
-        }
+        $role = $userData['role']
+            ?? ($userData['employmentDetails']['role'] ?? null)
+            ?? ($userData['employment']['role'] ?? null)
+            ?? ($userData['roles'][0] ?? null);
+        $status = $userData['status'] ?? null;
+        $credentials = Format::jsonArray($userData['credentials'] ?? []);
+        $employmentPayload = $userData['employmentDetails'] ?? $userData['employment'] ?? $userData['employmentInfo'] ?? [];
+        $employment = Format::jsonObject($employmentPayload);
+        $rawPayload = Format::jsonObject($userData);
+        $createdAtExt = Format::optionalTimestamp($userData['createdAt'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($userData['updatedAt'] ?? null);
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
             $this->context->getConn()->executeStatement(
-                'INSERT INTO business_user (business_user_id, business_id, name, metadata, created_at, updated_at)
-                 VALUES (:userId, :businessId, :name, :metadata, :createdAt, :updatedAt)
-                 ON CONFLICT (business_user_id) DO UPDATE SET
-                     business_id = EXCLUDED.business_id,
-                     name = EXCLUDED.name,
-                     metadata = EXCLUDED.metadata,
-                     updated_at = EXCLUDED.updated_at',
+                'INSERT INTO business_user (
+                    business_id, user_id, first_name, last_name,
+                    role, status, credentials, employment, raw_payload,
+                    created_at_ext, updated_at_ext,
+                    created_at, updated_at
+                ) VALUES (
+                    :businessId, :userId, :firstName, :lastName,
+                    :role, :status, :credentials, :employment, :rawPayload,
+                    :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
+                ) ON CONFLICT (business_id, user_id) DO UPDATE SET
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
+                    role = EXCLUDED.role,
+                    status = EXCLUDED.status,
+                    credentials = EXCLUDED.credentials,
+                    employment = EXCLUDED.employment,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    created_at = EXCLUDED.created_at,
+                    updated_at = EXCLUDED.updated_at',
                 [
-                    'userId' => $userId,
                     'businessId' => $businessId,
-                    'name' => $name,
-                    'metadata' => $metadata,
+                    'userId' => $userId,
+                    'firstName' => $firstName,
+                    'lastName' => $lastName,
+                    'role' => $role,
+                    'status' => $status,
+                    'credentials' => $credentials,
+                    'employment' => $employment,
+                    'rawPayload' => $rawPayload,
+                    'createdAtExt' => $createdAtExt,
+                    'updatedAtExt' => $updatedAtExt,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]

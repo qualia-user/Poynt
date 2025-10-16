@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Config\ConfigApp;
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
@@ -64,8 +65,8 @@ class WebhookService
             // Insert an audit record for this outgoing registration call
             $this->context->getConn()->insert('webhook_audit', [
                 'event_type'    => 'WEBHOOK_REGISTRATION',
-                'payload'       => json_encode($payload),
-                'headers'       => json_encode($response->getHeaders()),
+                'payload'       => Format::jsonObject($payload),
+                'headers'       => Format::jsonObject($response->getHeaders()),
                 'processed'     => true,
                 'error_message' => null,
             ]);
@@ -81,8 +82,8 @@ class WebhookService
             // Insert an audit record capturing the failure
             $this->context->getConn()->insert('webhook_audit', [
                 'event_type'    => 'WEBHOOK_REGISTRATION',
-                'payload'       => json_encode($payload),
-                'headers'       => json_encode($e->hasResponse() ? $e->getResponse()->getHeaders() : []),
+                'payload'       => Format::jsonObject($payload),
+                'headers'       => Format::jsonObject($e->hasResponse() ? $e->getResponse()->getHeaders() : []),
                 'processed'     => false,
                 'error_message' => $errorMsg,
             ],

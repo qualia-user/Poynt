@@ -54,18 +54,11 @@ class CallbackService
         $businessId = $handler->getBusinessId();
         $storeId = $handler->getStoreId();
 
-        $businessService = $this->serviceFactory->business($businessId);
+        // TODO
         $this->startTrialIfMissing($businessId, $storeId);
 
         if ($businessId) {
-            $stores = $businessService->fetchBusinessStores($businessId);
-            $businessService->upsertStores($stores);
-
-            if ($business = $businessService->fetchBusinessById($businessId)) {
-                $businessService->upsert($business);
-            }
-
-            $this->gatherInitialResources($businessId, $businessService);
+            $this->gatherInitialResources($businessId);
         } else {
             $this->context->getLog()->warning('Skipping onboarding sync: missing businessId in callback response.');
         }
@@ -136,66 +129,10 @@ class CallbackService
         }
     }
 
-    private function gatherInitialResources(
-        string $businessId,
-        BusinessService $businessService
-    ): void {
+    private function gatherInitialResources(string $businessId): void
+    {
         foreach ($this->serviceFactory->onboardingResources($businessId) as $service) {
             $this->syncResourceCollection($businessId, $service);
-        }
-
-        $orders = $businessService->fetchBusinessOrders($businessId);
-        if (is_array($orders) && !empty($orders)) {
-            $orderService = $this->serviceFactory->order();
-            foreach ($orders as $order) {
-                if (!is_array($order)) {
-                    continue;
-                }
-
-                try {
-                    $orderService->upsert($order);
-                } catch (Throwable $e) {
-                    $this->context->getLog()->error(
-                        sprintf(
-                            'Failed to persist order %s for business %s: %s',
-                            $order['id'] ?? 'unknown',
-                            $businessId,
-                            $e->getMessage()
-                        )
-                    );
-                }
-            }
-        }
-
-        try {
-            $merchantToken = $this->serviceFactory->token()->getMerchantToken($businessId);
-        } catch (Throwable $e) {
-            $this->context->getLog()->error(
-                sprintf(
-                    'Failed to load merchant token for transaction sync (business %s): %s',
-                    $businessId,
-                    $e->getMessage()
-                )
-            );
-            return;
-        }
-
-        if (is_string($merchantToken) && $merchantToken !== '') {
-            try {
-                $this->serviceFactory->transaction()->fetchAndStore($merchantToken, $businessId);
-            } catch (Throwable $e) {
-                $this->context->getLog()->error(
-                    sprintf(
-                        'Failed to sync transactions for business %s: %s',
-                        $businessId,
-                        $e->getMessage()
-                    )
-                );
-            }
-        } else {
-            $this->context->getLog()->warning(
-                sprintf('No merchant token available for transaction sync (business %s).', $businessId)
-            );
         }
     }
 

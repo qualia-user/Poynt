@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -42,30 +43,52 @@ class TaxService
         $businessId = $taxData['businessId'];
         $name = $taxData['name'] ?? null;
 
-        $metadata = json_encode($taxData);
-        if ($metadata === false) {
-            $this->context->getLog()->error(
-                "TaxService::upsert: failed to json_encode taxData for tax_id={$taxId}"
-            );
-            return false;
+        $rateBp = null;
+        if (isset($taxData['rateBp']) && is_numeric($taxData['rateBp'])) {
+            $rateBp = (int) $taxData['rateBp'];
+        } elseif (isset($taxData['rate']) && is_numeric($taxData['rate'])) {
+            $rate = (float) $taxData['rate'];
+            $rateBp = (int) round(($rate <= 1 ? $rate * 10000 : $rate * 100));
         }
+
+        $scope = $taxData['scope'] ?? $taxData['scopeType'] ?? null;
+        $active = Format::optionalBool($taxData['active'] ?? $taxData['isActive'] ?? null);
+        $rawPayload = Format::jsonObject($taxData);
+        $createdAtExt = Format::optionalTimestamp($taxData['createdAt'] ?? null);
+        $updatedAtExt = Format::optionalTimestamp($taxData['updatedAt'] ?? null);
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
             $this->context->getConn()->executeStatement(
-                'INSERT INTO tax (tax_id, business_id, name, metadata, created_at, updated_at)
-                 VALUES (:taxId, :businessId, :name, :metadata, :createdAt, :updatedAt)
-                 ON CONFLICT (tax_id) DO UPDATE SET
-                     business_id = EXCLUDED.business_id,
-                     name = EXCLUDED.name,
-                     metadata = EXCLUDED.metadata,
-                     updated_at = EXCLUDED.updated_at',
+                'INSERT INTO tax (
+                    tax_id, business_id, name, rate_bp, scope, active,
+                    raw_payload, created_at_ext, updated_at_ext,
+                    created_at, updated_at
+                ) VALUES (
+                    :taxId, :businessId, :name, :rateBp, :scope, :active,
+                    :rawPayload, :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
+                ) ON CONFLICT (tax_id) DO UPDATE SET
+                    business_id = EXCLUDED.business_id,
+                    name = EXCLUDED.name,
+                    rate_bp = EXCLUDED.rate_bp,
+                    scope = EXCLUDED.scope,
+                    active = EXCLUDED.active,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    updated_at = EXCLUDED.updated_at',
                 [
                     'taxId' => $taxId,
                     'businessId' => $businessId,
                     'name' => $name,
-                    'metadata' => $metadata,
+                    'rateBp' => $rateBp,
+                    'scope' => $scope,
+                    'active' => $active,
+                    'rawPayload' => $rawPayload,
+                    'createdAtExt' => $createdAtExt,
+                    'updatedAtExt' => $updatedAtExt,
                     'createdAt' => $now,
                     'updatedAt' => $now,
                 ]
