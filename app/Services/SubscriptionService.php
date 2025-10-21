@@ -58,21 +58,43 @@ class SubscriptionService
      * @return array|null  List of plans (decoded JSON). Example keys: ['planId'=>'...', 'name'=>'...', 'price'=>..., …]
      * @throws RuntimeException on HTTP or decoding error
      */
-    public function fetchPlans(string $appAccessToken): ?array
+    public function fetchPlans(
+        string $appAccessToken,
+        ?string $currency = null,
+        ?string $businessId = null,
+        ?string $status = null
+    ): ?array
     {
         try {
-            $response = $this->http->get($this->buildAppResourceUrl('plans'), [
+            $query = array_filter([
+                'currency'   => $currency,
+                'businessId' => $businessId,
+                'status'     => $status,
+            ], static fn($value) => $value !== null && $value !== '');
+
+            $options = [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $appAccessToken,
                     'Accept'        => 'application/json',
-                ]
-            ]);
+                    'Content-Type'  => 'application/json',
+                ],
+            ];
+
+            if ($query !== []) {
+                $options['query'] = $query;
+            }
+
+            $response = $this->http->get($this->buildAppResourceUrl('plans'), $options);
             $body = (string) $response->getBody();
             $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
 
             return $decoded;
         } catch (JsonException $e) {
-            $this->context->getLog()->error("Error parsing plans response: %s. Body: %s" . $e->getMessage());
+            $this->context->getLog()->error(sprintf(
+                'Error parsing plans response: %s. Body: %s',
+                $e->getMessage(),
+                $body ?? ''
+            ));
 
             return null;
         } catch (RequestException $e) {
@@ -95,9 +117,14 @@ class SubscriptionService
      * @param string $appAccessToken
      * @return array|null
      */
-    public function fetchApplicationSubscriptionPlans(string $appAccessToken): ?array
+    public function fetchApplicationSubscriptionPlans(
+        string $appAccessToken,
+        ?string $currency = null,
+        ?string $businessId = null,
+        ?string $status = null
+    ): ?array
     {
-        return $this->fetchPlans($appAccessToken);
+        return $this->fetchPlans($appAccessToken, $currency, $businessId, $status);
     }
 
     /**

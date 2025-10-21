@@ -211,6 +211,11 @@ namespace Services {
 
             self::assertSame($expected, $result);
             self::assertFalse($this->testHandler->hasErrorRecords());
+            self::assertCount(1, $this->history);
+            $request = $this->history[0]['request'];
+            self::assertSame('Bearer token', $request->getHeaderLine('Authorization'));
+            self::assertSame('application/json', $request->getHeaderLine('Content-Type'));
+            self::assertSame('', $request->getUri()->getQuery());
         }
 
         public function testFetchPlansReturnsNullAndLogsErrorWhenJsonInvalid(): void
@@ -238,6 +243,25 @@ namespace Services {
 
             self::assertNull($result);
             self::assertTrue($this->testHandler->hasErrorThatContains('Error fetching plans'));
+        }
+
+        public function testFetchPlansAllowsOptionalQueryParameters(): void
+        {
+            $service = $this->createServiceWithQueue([
+                new Response(200, ['Content-Type' => 'application/json'], '[]'),
+            ]);
+
+            $service->fetchPlans('token', 'USD', 'biz-42', 'ACTIVE');
+
+            self::assertCount(1, $this->history);
+            $uri = $this->history[0]['request']->getUri();
+            parse_str($uri->getQuery(), $queryParams);
+
+            self::assertSame([
+                'currency' => 'USD',
+                'businessId' => 'biz-42',
+                'status' => 'ACTIVE',
+            ], $queryParams);
         }
 
         /**
