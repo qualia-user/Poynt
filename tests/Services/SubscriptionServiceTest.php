@@ -108,6 +108,39 @@ namespace Services {
             self::assertSame('Bearer token', $this->history[0]['request']->getHeaderLine('Authorization'));
         }
 
+        public function testFetchSubscriptionsHandlesListPayloadKey(): void
+        {
+            $subscription = [
+                'subscriptionId' => 'sub-2',
+                'businessId' => 'biz-2',
+                'storeId' => 'store-99',
+                'planId' => 'plan-pro',
+                'status' => 'active',
+            $this->connection
+                ->expects(self::once())
+                ->method('executeStatement')
+                ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
+                ->willReturn(1);
+
+            $service = $this->createServiceWithQueue([
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode([
+                        'list' => [$subscription],
+                        'total' => 1,
+                        'start' => 0,
+                        'count' => 1,
+                    ], JSON_THROW_ON_ERROR)
+                ),
+            ]);
+
+            $result = $service->fetchSubscriptions('token', 'biz-2');
+
+            self::assertSame([$subscription], $result);
+            self::assertFalse($this->testHandler->hasWarningRecords());
+        }
+              
         public function testFetchSubscriptionsRetriesWithMerchantTokenWhenBusinessClaimMissing(): void
         {
             $subscription = [
@@ -162,7 +195,7 @@ namespace Services {
             self::assertTrue($this->testHandler->hasInfoThatContains('Retrying subscription fetch with merchant token'));
         }
 
-        public function testFetchSubscriptionsSkipsNonArrayEntries(): void
+        public function testFetchSubscriptionsRetriesWithMerchantTokenWhenBusinessClaimMissing(): void
         {
             $subscription = [
                 'subscriptionId' => 'sub-1',
@@ -185,20 +218,35 @@ namespace Services {
                 ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
                 ->willReturn(1);
 
+            $this->connection
+                ->expects(self::once())
+                ->method('fetchAssociative')
+                ->willReturn(['access_token' => 'merchant-token']);
+
+            $errorBody = json_encode([
+                'code' => 'UNAUTHORIZED_ACCESS',
+                'httpStatus' => 401,
+                'message' => 'Access not authorized for the requested resource.',
+                'developerMessage' => 'The businessId must be present in the JWT',
+                'requestId' => 'test-request',
+            ], JSON_THROW_ON_ERROR);
+
             $service = $this->createServiceWithQueue([
+                new Response(401, ['Content-Type' => 'application/json'], $errorBody),
                 new Response(
                     200,
                     ['Content-Type' => 'application/json'],
-                    json_encode([
-                        'subscriptions' => [$subscription],
-                        'total' => 1,
-                    ], JSON_THROW_ON_ERROR)
+                    json_encode(['subscriptions' => [$subscription]], JSON_THROW_ON_ERROR)
                 ),
             ]);
 
-            $result = $service->fetchSubscriptions('token', 'biz-1');
+            $result = $service->fetchSubscriptions('app-token', 'biz-1');
 
             self::assertSame([$subscription], $result);
+            self::assertCount(2, $this->history);
+            self::assertSame('Bearer app-token', $this->history[0]['request']->getHeaderLine('Authorization'));
+            self::assertSame('Bearer merchant-token', $this->history[1]['request']->getHeaderLine('Authorization'));
+            self::assertTrue($this->testHandler->hasInfoThatContains('Retrying subscription fetch with merchant token'));
         }
 
         public function testFetchPlansReturnsDecodedResponseAndDoesNotLogErrors(): void
@@ -215,6 +263,77 @@ namespace Services {
 
             self::assertSame($expected, $result);
             self::assertFalse($this->testHandler->hasErrorRecords());
+            self::assertCount(1, $this->history);
+            $request = $this->history[0]['request'];
+            self::assertSame('Bearer token', $request->getHeaderLine('Authorization'));
+            self::assertSame('application/json', $request->getHeaderLine('Content-Type'));
+            self::assertSame('', $request->getUri()->getQuery());
+        }
+
+                public function testFetchSubscriptionsSkipsNonArrayEntries(): void
+        {
+            $subscription = [
+                'subscriptionId' => 'sub-1',
+                'businessId' => 'biz-1',
+                'storeId' => 'store-1',
+                'planId' => 'plan-basic',
+                'status' => 'active',
+                'phase' => 'active',
+                'trialStart' => null,
+                'trialEnd' => null,
+                'startAt' => '2024-01-01T00:00:00Z',
+                'currentPeriodEnd' => null,
+                'cancelAtPeriodEnd' => false,
+                'canceledAt' => null,
+            ];
+
+            $this->connection
+                ->expects(self::once())
+                ->method('executeStatement')
+                ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
+                ->willReturn(1);
+
+            $this->connection
+                ->expects(self::never())
+                ->method('fetchAssociative');
+
+            $service = $this->createServiceWithQueue([
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode([
+                        'subscriptions' => [$subscription],
+                        'total' => 1,
+                    ], JSON_THROW_ON_ERROR)
+                ),
+            ]);
+
+            $result = $service->fetchSubscriptions('token', 'biz-1');
+
+            self::assertSame([$subscription], $result);
+            self::assertCount(1, $this->history);
+            self::assertSame('Bearer token', $this->history[0]['request']->getHeaderLine('Authorization'));
+        }
+
+        public function testFetchPlansReturnsDecodedResponseAndDoesNotLogErrors(): void
+        {
+            $expected = [
+                ['planId' => '123', 'name' => 'Starter'],
+            ];
+
+            $service = $this->createServiceWithQueue([
+                new Response(200, ['Content-Type' => 'application/json'], json_encode($expected, JSON_THROW_ON_ERROR)),
+            ]);
+
+            $result = $service->fetchPlans('token');
+
+            self::assertSame($expected, $result);
+            self::assertFalse($this->testHandler->hasErrorRecords());
+            self::assertCount(1, $this->history);
+            $request = $this->history[0]['request'];
+            self::assertSame('Bearer token', $request->getHeaderLine('Authorization'));
+            self::assertSame('application/json', $request->getHeaderLine('Content-Type'));
+            self::assertSame('', $request->getUri()->getQuery());
         }
 
         public function testFetchPlansReturnsNullAndLogsErrorWhenJsonInvalid(): void
@@ -242,6 +361,25 @@ namespace Services {
 
             self::assertNull($result);
             self::assertTrue($this->testHandler->hasErrorThatContains('Error fetching plans'));
+        }
+
+        public function testFetchPlansAllowsOptionalQueryParameters(): void
+        {
+            $service = $this->createServiceWithQueue([
+                new Response(200, ['Content-Type' => 'application/json'], '[]'),
+            ]);
+
+            $service->fetchPlans('token', 'USD', 'biz-42', 'ACTIVE');
+
+            self::assertCount(1, $this->history);
+            $uri = $this->history[0]['request']->getUri();
+            parse_str($uri->getQuery(), $queryParams);
+
+            self::assertSame([
+                'currency' => 'USD',
+                'businessId' => 'biz-42',
+                'status' => 'ACTIVE',
+            ], $queryParams);
         }
 
         /**
