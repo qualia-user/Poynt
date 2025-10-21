@@ -229,8 +229,19 @@ class CatalogService
                 continue;
             }
 
-            $position = $product['position'] ?? $product['index'] ?? null;
+            $position = $product['position']
+                ?? $product['displayOrder']
+                ?? $product['index']
+                ?? null;
             $payload = Format::jsonObject($product);
+            $createdAtExt = Format::optionalTimestamp(
+                $product['createdAt'] ?? $product['createdAtExt'] ?? null
+            );
+            $updatedAtExt = Format::optionalTimestamp(
+                $product['updatedAt'] ?? $product['updatedAtExt'] ?? null
+            );
+
+            $now = (new \DateTimeImmutable('now'))->format('Y-m-d H:i:sP');
 
             try {
                 $this->context->getConn()->executeStatement(
@@ -238,27 +249,151 @@ class CatalogService
                         catalog_id,
                         product_id,
                         position,
-                        payload
+                        payload,
+                        created_at_ext,
+                        updated_at_ext,
+                        created_at,
+                        updated_at
                     ) VALUES (
                         :catalogId,
                         :productId,
                         :position,
-                        :payload
+                        :payload,
+                        :createdAtExt,
+                        :updatedAtExt,
+                        :createdAt,
+                        :updatedAt
                     ) ON CONFLICT (catalog_id, product_id) DO UPDATE SET
                         position = EXCLUDED.position,
-                        payload  = EXCLUDED.payload',
+                        payload  = EXCLUDED.payload,
+                        created_at_ext = EXCLUDED.created_at_ext,
+                        updated_at_ext = EXCLUDED.updated_at_ext,
+                        updated_at = EXCLUDED.updated_at',
                     [
                         'catalogId' => $catalogId,
                         'productId' => $product['id'],
                         'position'  => $position,
                         'payload'   => $payload,
+                        'createdAtExt' => $createdAtExt,
+                        'updatedAtExt' => $updatedAtExt,
+                        'createdAt' => $now,
+                        'updatedAt' => $now,
                     ]
                 );
+
+                $taxes = [];
+                if (isset($product['taxes']) && is_array($product['taxes'])) {
+                    $taxes = $product['taxes'];
+                }
+
+                if (!empty($taxes)) {
+                    $this->syncCatalogProductTaxes($catalogId, $product['id'], $taxes);
+                } else {
+                    $this->purgeCatalogProductTaxes($catalogId, $product['id']);
+                }
             } catch (\Throwable $e) {
                 $this->context->getLog()->error(
                     sprintf('CatalogService::syncCatalogProducts: failed for catalog %s product %s: %s', $catalogId, $product['id'], $e->getMessage())
                 );
             }
+        }
+    }
+
+    private function syncCatalogProductTaxes(string $catalogId, string $productId, array $taxes): void
+    {
+        foreach ($taxes as $tax) {
+            $taxId = null;
+            $payloadSource = $tax;
+
+            if (is_array($tax)) {
+                $taxId = $tax['id'] ?? $tax['taxId'] ?? null;
+            } elseif (is_string($tax) || is_int($tax)) {
+                $taxId = (string) $tax;
+                $payloadSource = ['id' => $taxId];
+            }
+
+            if ($taxId === null || $taxId === '') {
+                continue;
+            }
+
+            $payload = Format::jsonObject($payloadSource);
+            $createdAtExt = Format::optionalTimestamp(
+                is_array($payloadSource) ? ($payloadSource['createdAt'] ?? $payloadSource['createdAtExt'] ?? null) : null
+            );
+            $updatedAtExt = Format::optionalTimestamp(
+                is_array($payloadSource) ? ($payloadSource['updatedAt'] ?? $payloadSource['updatedAtExt'] ?? null) : null
+            );
+            $now = (new \DateTimeImmutable('now'))->format('Y-m-d H:i:sP');
+
+            try {
+                $this->context->getConn()->executeStatement(
+                    'INSERT INTO catalog_product_tax (
+                        catalog_id,
+                        product_id,
+                        tax_id,
+                        payload,
+                        created_at_ext,
+                        updated_at_ext,
+                        created_at,
+                        updated_at
+                    ) VALUES (
+                        :catalogId,
+                        :productId,
+                        :taxId,
+                        :payload,
+                        :createdAtExt,
+                        :updatedAtExt,
+                        :createdAt,
+                        :updatedAt
+                    ) ON CONFLICT (catalog_id, product_id, tax_id) DO UPDATE SET
+                        payload = EXCLUDED.payload,
+                        created_at_ext = EXCLUDED.created_at_ext,
+                        updated_at_ext = EXCLUDED.updated_at_ext,
+                        updated_at = EXCLUDED.updated_at',
+                    [
+                        'catalogId' => $catalogId,
+                        'productId' => $productId,
+                        'taxId' => $taxId,
+                        'payload' => $payload,
+                        'createdAtExt' => $createdAtExt,
+                        'updatedAtExt' => $updatedAtExt,
+                        'createdAt' => $now,
+                        'updatedAt' => $now,
+                    ]
+                );
+            } catch (\Throwable $e) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'CatalogService::syncCatalogProductTaxes: failed for catalog %s product %s tax %s: %s',
+                        $catalogId,
+                        $productId,
+                        $taxId,
+                        $e->getMessage()
+                    )
+                );
+            }
+        }
+    }
+
+    private function purgeCatalogProductTaxes(string $catalogId, string $productId): void
+    {
+        try {
+            $this->context->getConn()->executeStatement(
+                'DELETE FROM catalog_product_tax WHERE catalog_id = :catalogId AND product_id = :productId',
+                [
+                    'catalogId' => $catalogId,
+                    'productId' => $productId,
+                ]
+            );
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CatalogService::purgeCatalogProductTaxes: failed for catalog %s product %s: %s',
+                    $catalogId,
+                    $productId,
+                    $e->getMessage()
+                )
+            );
         }
     }
 
