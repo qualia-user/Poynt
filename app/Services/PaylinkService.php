@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Core\Context;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 
 class PaylinkService
@@ -13,7 +14,7 @@ class PaylinkService
     private ClientInterface $httpClient;
     private ?string $businessId = null;
 
-    const POYNT_ENDPOINT = 'https://services.poynt.net/businesses';
+    private const PAYLINK_STORES_ENDPOINT = 'https://poynt.godaddy.com/api/v2/stores';
 
     public function __construct(Context $context, ?string $businessId = null, ?ClientInterface $httpClient = null)
     {
@@ -514,10 +515,16 @@ class PaylinkService
     }
 
     /**
-     * Fetch paylinks for a business from the Poynt API.
+     * Fetch paylink datasets for each store that belongs to the given business.
      *
      * @param string|null $businessId
-     * @return array|false
+     * @return array<int, array{
+     *     storeId: string,
+     *     store: array<mixed>,
+     *     recentSales: array<mixed>,
+     *     totalSales: array<mixed>,
+     *     all: array<mixed>
+     * }>|false
      */
     public function fetchByBusinessId(?string $businessId = null): array|false
     {
@@ -530,21 +537,85 @@ class PaylinkService
 
         $tokenService = new TokenService($this->context);
         $accessToken = $tokenService->getMerchantToken($businessId);
+        if (!$accessToken) {
+            $this->context->getLog()->warning(
+                sprintf('PaylinkService::fetchByBusinessId: missing merchant token for business %s', $businessId)
+            );
+
+            return false;
+        }
+
+        $storeService = new StoreService($this->context, $businessId, $this->httpClient);
+        $stores = $storeService->fetchByBusinessId($businessId);
+        if (!is_array($stores) || empty($stores)) {
+            $this->context->getLog()->info(
+                sprintf('PaylinkService::fetchByBusinessId: no stores found for business %s', $businessId)
+            );
+
+            return [];
+        }
+
+        $results = [];
+        foreach ($stores as $store) {
+            if (!is_array($store) || empty($store['id'])) {
+                continue;
+            }
+
+            $storeId = (string) $store['id'];
+            $results[] = [
+                'storeId' => $storeId,
+                'store' => $store,
+                'recentSales' => $this->requestPaylinkCollection($storeId, $accessToken, 'recentSales'),
+                'totalSales' => $this->requestPaylinkCollection($storeId, $accessToken, 'totalSales'),
+                'all' => $this->requestPaylinkCollection($storeId, $accessToken, 'all'),
+            ];
+        }
+
+        return $results;
+    }
+
+    /**
+     * @param string $storeId
+     * @param string $accessToken
+     * @param string $collection One of "recentSales", "totalSales" or "all".
+     *
+     * @return array<mixed>
+     */
+    private function requestPaylinkCollection(string $storeId, string $accessToken, string $collection): array
+    {
+        $url = sprintf('%s/%s/payLinks/%s', self::PAYLINK_STORES_ENDPOINT, $storeId, $collection);
 
         try {
-            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/paylinks', [
+            $response = $this->httpClient->get($url, [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],
             ]);
 
             $data = json_decode($response->getBody(), true);
-            return $data ?? false;
+            return is_array($data) ? $data : [];
+        } catch (BadResponseException $e) {
+            $response = $e->getResponse();
+            if ($response !== null && $response->getStatusCode() === 404) {
+                $this->context->getLog()->info(
+                    sprintf(
+                        'PaylinkService::requestPaylinkCollection: GET %s returned 404, treating as empty dataset',
+                        parse_url($url, PHP_URL_PATH) ?? $url
+                    )
+                );
+
+                return [];
+            }
+
+            $this->context->getLog()->error(
+                sprintf('PaylinkService::requestPaylinkCollection: %s', $e->getMessage())
+            );
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
-                'PaylinkService::fetchByBusinessId: ' . $e->getMessage()
+                sprintf('PaylinkService::requestPaylinkCollection: %s', $e->getMessage())
             );
-            return false;
         }
+
+        return [];
     }
 }
