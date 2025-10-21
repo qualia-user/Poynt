@@ -162,6 +162,45 @@ namespace Services {
             self::assertTrue($this->testHandler->hasInfoThatContains('Retrying subscription fetch with merchant token'));
         }
 
+        public function testFetchSubscriptionsSkipsNonArrayEntries(): void
+        {
+            $subscription = [
+                'subscriptionId' => 'sub-1',
+                'businessId' => 'biz-1',
+                'storeId' => 'store-1',
+                'planId' => 'plan-basic',
+                'status' => 'active',
+                'phase' => 'active',
+                'trialStart' => null,
+                'trialEnd' => null,
+                'startAt' => '2024-01-01T00:00:00Z',
+                'currentPeriodEnd' => null,
+                'cancelAtPeriodEnd' => false,
+                'canceledAt' => null,
+            ];
+
+            $this->connection
+                ->expects(self::once())
+                ->method('executeStatement')
+                ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
+                ->willReturn(1);
+
+            $service = $this->createServiceWithQueue([
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode([
+                        'subscriptions' => [$subscription],
+                        'total' => 1,
+                    ], JSON_THROW_ON_ERROR)
+                ),
+            ]);
+
+            $result = $service->fetchSubscriptions('token', 'biz-1');
+
+            self::assertSame([$subscription], $result);
+        }
+
         public function testFetchPlansReturnsDecodedResponseAndDoesNotLogErrors(): void
         {
             $expected = [

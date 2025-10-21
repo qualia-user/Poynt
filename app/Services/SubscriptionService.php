@@ -400,7 +400,9 @@ class SubscriptionService
         ];
 
         try {
+
             $decoded = $this->performSubscriptionFetch($appAccessToken, $query);
+
         } catch (RequestException $e) {
             $decoded = $this->retryFetchSubscriptionsWithMerchantToken($businessId, $query, $e);
 
