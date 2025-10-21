@@ -38,20 +38,62 @@ namespace Services {
 
         private TestHandler $testHandler;
 
+        /** @var Connection&\PHPUnit\Framework\MockObject\MockObject */
+        private Connection $connection;
+
         protected function setUp(): void
         {
             parent::setUp();
 
             $api = $this->createMock(Api::class);
-            $connection = $this->createMock(Connection::class);
+            $this->connection = $this->createMock(Connection::class);
             $this->testHandler = new TestHandler();
             $logger = new Logger('test');
             $logger->pushHandler($this->testHandler);
 
-            $this->context = new Context($api, $connection, $logger);
+            $this->context = new Context($api, $this->connection, $logger);
 
             ConfigApp::$orgId = 'test-org';
             ConfigApp::$appId = 'test-app';
+        }
+
+        public function testFetchSubscriptionsSkipsNonArrayEntries(): void
+        {
+            $subscription = [
+                'subscriptionId' => 'sub-1',
+                'businessId' => 'biz-1',
+                'storeId' => 'store-1',
+                'planId' => 'plan-basic',
+                'status' => 'active',
+                'phase' => 'active',
+                'trialStart' => null,
+                'trialEnd' => null,
+                'startAt' => '2024-01-01T00:00:00Z',
+                'currentPeriodEnd' => null,
+                'cancelAtPeriodEnd' => false,
+                'canceledAt' => null,
+            ];
+
+            $this->connection
+                ->expects(self::once())
+                ->method('executeStatement')
+                ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
+                ->willReturn(1);
+
+            $service = $this->createServiceWithQueue([
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode([
+                        'subscriptions' => [$subscription],
+                        'total' => 1,
+                    ], JSON_THROW_ON_ERROR)
+                ),
+            ]);
+
+            $result = $service->fetchSubscriptions('token', 'biz-1');
+
+            self::assertSame([$subscription], $result);
         }
 
         public function testFetchPlansReturnsDecodedResponseAndDoesNotLogErrors(): void
@@ -109,7 +151,7 @@ namespace Services {
                 'base_uri' => SubscriptionService::POYNT_BILLING_BASE,
             ]);
 
-            return new SubscriptionService($this->context, null, $client);
+            return new SubscriptionService($this->context, null, null, $client);
         }
 
     }

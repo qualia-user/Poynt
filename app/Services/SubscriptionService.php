@@ -18,11 +18,12 @@ use GuzzleHttp\Exception\RequestException;
 use JsonException;
 use Ramsey\Uuid\Uuid;
 use RuntimeException;
+use function array_is_list;
 use function str_starts_with;
 
 class SubscriptionService
 {
-    public const POYNT_BILLING_BASE = 'https://billing.poynt.net/apps';
+    public const POYNT_BILLING_BASE = 'https://billing.poynt.net/organizations';
     private const DEFAULT_TRIAL_DAYS = 14;
     private Context $context;
     private ClientInterface $http;
@@ -394,8 +395,20 @@ class SubscriptionService
                 ],
             ]);
             $decoded = json_decode((string)$response->getBody(), true);
+
             if (is_array($decoded)) {
-                $respList = $decoded;
+                if (isset($decoded['subscriptions']) && is_array($decoded['subscriptions'])) {
+                    $respList = $decoded['subscriptions'];
+                } elseif (isset($decoded['items']) && is_array($decoded['items'])) {
+                    $respList = $decoded['items'];
+                } elseif (array_is_list($decoded)) {
+                    $respList = $decoded;
+                } else {
+                    $this->context->getLog()->warning(
+                        'SubscriptionService::fetchSubscriptions received unexpected payload keys: ' .
+                        implode(',', array_keys($decoded))
+                    );
+                }
             }
         } catch (RequestException $e) {
             $msg = $e->hasResponse()
@@ -405,9 +418,15 @@ class SubscriptionService
         } catch (GuzzleException $e) {
             $this->context->getLog()->error("Poynt GET subscription failed: ". json_encode($e));
         }
-
         // Upsert each subscription into local DB
-        foreach ($respList as $sub) {
+        foreach ($respList as $index => $sub) {
+            if (!is_array($sub)) {
+                $this->context->getLog()->warning(
+                    sprintf('Skipping non-array subscription payload at index %s', (string) $index)
+                );
+                continue;
+            }
+
             $this->upsertLocalSubscription($sub);
         }
 
@@ -696,12 +715,18 @@ class SubscriptionService
 
     private function buildAppResourceUrl(string $resource = ''): string
     {
+        $orgId = ConfigApp::$orgId ?? '';
+
+        if ($orgId === '') {
+            throw new RuntimeException('ConfigApp::$orgId must be configured to build billing URLs.');
+        }
+
         $appUrn = $this->getAppUrn();
         $base = rtrim(self::POYNT_BILLING_BASE, '/');
-
         $resourcePath = ltrim($resource, '/');
-        $suffix = $resourcePath === '' ? '' : '/' . $resourcePath;
 
-        return sprintf('%s/%s%s', $base, $appUrn, $suffix);
+        $url = sprintf('%s/%s/apps/%s', $base, $orgId, $appUrn);
+
+        return $resourcePath === '' ? $url : $url . '/' . $resourcePath;
     }
 }
