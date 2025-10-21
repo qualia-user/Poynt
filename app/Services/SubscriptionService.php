@@ -18,11 +18,12 @@ use GuzzleHttp\Exception\RequestException;
 use JsonException;
 use Ramsey\Uuid\Uuid;
 use RuntimeException;
+use function array_is_list;
 use function str_starts_with;
 
 class SubscriptionService
 {
-    public const POYNT_BILLING_BASE = 'https://billing.poynt.net/apps';
+    public const POYNT_BILLING_BASE = 'https://billing.poynt.net/organizations';
     private const DEFAULT_TRIAL_DAYS = 14;
     private Context $context;
     private ClientInterface $http;
@@ -341,18 +342,34 @@ class SubscriptionService
         try {
             $response = $this->http->post($endpoint, [
                 'headers' => [
-                    'Authorization' => 'Bearer ' . $appAccessToken,
+                    'Authorization' => 'Bearer ' . $accessToken,
                     'Accept'        => 'application/json',
                     'Content-Type'  => 'application/json',
                 ],
                 'json' => $body,
             ]);
-            $respData = json_decode((string)$response->getBody(), true);
+            $respData = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
         } catch (RequestException $e) {
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()
                 : $e->getMessage();
             $this->context->getLog()->error("Poynt CREATE subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+
+            return [];
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error("Poynt CREATE subscription failed: " . $e->getMessage());
+
+            return [];
+        } catch (JsonException $e) {
+            $this->context->getLog()->error('Poynt CREATE subscription returned invalid JSON: ' . $e->getMessage());
+
+            return [];
+        }
+
+        if (!is_array($respData)) {
+            $this->context->getLog()->warning('Poynt CREATE subscription returned unexpected payload type.');
+
+            return [];
         }
 
         // Overwrite local row (which likely already exists as a “trial”) with Poynt’s data
@@ -369,7 +386,7 @@ class SubscriptionService
      * Fetches all subscriptions for a given businessId from Poynt,
      * upserts each into the local `subscription` table, and returns the list.
      *
-     * @param string $appAccessToken  App-level OAuth token
+     * @param string $appAccessToken  App-level OAuth token (will fall back to a stored merchant token if required)
      * @param string $businessId      Poynt business ID
      * @return array  List of subscription objects (decoded JSON)
      * @throws RuntimeException on HTTP/decoding error
@@ -378,40 +395,210 @@ class SubscriptionService
         string $appAccessToken,
         string $businessId
     ): array {
-        $orgId = ConfigApp::$orgId;
-        $endpoint = $this->buildAppResourceUrl('subscriptions');
-
-        $respList = [];
+        $query = [
+            'businessId' => $businessId,
+        ];
 
         try {
-            $response = $this->http->get($endpoint, [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $appAccessToken,
-                    'Accept'        => 'application/json',
-                ],
-                'query' => [
-                    'businessId' => $businessId,
-                ],
-            ]);
-            $decoded = json_decode((string)$response->getBody(), true);
-            if (is_array($decoded)) {
-                $respList = $decoded;
-            }
+            $decoded = $this->performSubscriptionFetch($appAccessToken, $query);
         } catch (RequestException $e) {
-            $msg = $e->hasResponse()
-                ? $e->getResponse()->getBody()->getContents()
-                : $e->getMessage();
-            $this->context->getLog()->error("Poynt GET subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+            $decoded = $this->retryFetchSubscriptionsWithMerchantToken($businessId, $query, $e);
+
+            if ($decoded === null) {
+                $this->logSubscriptionRequestException($e, 'Poynt GET subscription failed');
+
+                return [];
+            }
+        } catch (JsonException $e) {
+            $this->context->getLog()->error('Poynt GET subscription returned invalid JSON: ' . $e->getMessage());
+
+            return [];
         } catch (GuzzleException $e) {
-            $this->context->getLog()->error("Poynt GET subscription failed: ". json_encode($e));
+            $this->context->getLog()->error('Poynt GET subscription failed: ' . $e->getMessage());
+
+            return [];
         }
 
+        $respList = $this->normalizeSubscriptionList($decoded);
+
         // Upsert each subscription into local DB
-        foreach ($respList as $sub) {
+        foreach ($respList as $index => $sub) {
+            if (!is_array($sub)) {
+                $this->context->getLog()->warning(
+                    sprintf('Skipping non-array subscription payload at index %s', (string) $index)
+                );
+                continue;
+            }
+
             $this->upsertLocalSubscription($sub);
         }
 
         return $respList;
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     * @return array<mixed>
+     * @throws RequestException
+     * @throws GuzzleException
+     * @throws JsonException
+     */
+    private function performSubscriptionFetch(string $accessToken, array $query): array
+    {
+        $endpoint = $this->buildAppResourceUrl('subscriptions');
+
+        $response = $this->http->get($endpoint, [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $accessToken,
+                'Accept'        => 'application/json',
+            ],
+            'query' => $query,
+        ]);
+
+        return json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     */
+    private function retryFetchSubscriptionsWithMerchantToken(
+        string $businessId,
+        array $query,
+        RequestException $exception
+    ): ?array {
+        if (!$this->shouldRetryWithMerchantToken($exception)) {
+            return null;
+        }
+
+        $tokenService = new TokenService($this->context);
+
+        try {
+            $merchantToken = $tokenService->getMerchantToken($businessId);
+        } catch (\Throwable $tokenError) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'SubscriptionService::fetchSubscriptions failed to load merchant token for business %s: %s',
+                    $businessId,
+                    $tokenError->getMessage()
+                )
+            );
+
+            return null;
+        }
+
+        if (!is_string($merchantToken) || $merchantToken === '') {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'SubscriptionService::fetchSubscriptions has no merchant token stored for business %s; cannot retry.',
+                    $businessId
+                )
+            );
+
+            return null;
+        }
+
+        $this->context->getLog()->info(
+            sprintf('Retrying subscription fetch with merchant token for business %s', $businessId)
+        );
+
+        try {
+            return $this->performSubscriptionFetch($merchantToken, $query);
+        } catch (RequestException $retryException) {
+            $this->logSubscriptionRequestException($retryException, 'Poynt GET subscription retry failed');
+        } catch (JsonException $retryException) {
+            $this->context->getLog()->error('Poynt GET subscription retry returned invalid JSON: ' . $retryException->getMessage());
+        } catch (GuzzleException $retryException) {
+            $this->context->getLog()->error('Poynt GET subscription retry failed: ' . $retryException->getMessage());
+        }
+
+        return null;
+    }
+
+    private function shouldRetryWithMerchantToken(RequestException $exception): bool
+    {
+        $response = $exception->getResponse();
+        if ($response === null || $response->getStatusCode() !== 401) {
+            return false;
+        }
+
+        $bodyStream = $response->getBody();
+        $body = (string) $bodyStream;
+        if ($bodyStream->isSeekable()) {
+            $bodyStream->rewind();
+        }
+        if ($body === '') {
+            return false;
+        }
+
+        try {
+            $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $jsonException) {
+            $this->context->getLog()->debug(
+                'Failed to decode subscription error response for retry decision: ' . $jsonException->getMessage()
+            );
+
+            return false;
+        }
+
+        $messages = array_filter([
+            $payload['developerMessage'] ?? null,
+            $payload['message'] ?? null,
+        ], 'is_string');
+
+        foreach ($messages as $message) {
+            if (stripos($message, 'businessid must be present in the jwt') !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param mixed $payload
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalizeSubscriptionList(mixed $payload): array
+    {
+        if (!is_array($payload)) {
+            return [];
+        }
+
+        $knownListKeys = ['subscriptions', 'items', 'list'];
+
+        foreach ($knownListKeys as $key) {
+            if (isset($payload[$key]) && is_array($payload[$key])) {
+                return $payload[$key];
+            }
+        }
+
+        if (array_is_list($payload)) {
+            return $payload;
+        }
+
+        $this->context->getLog()->warning(
+            'SubscriptionService::fetchSubscriptions received unexpected payload keys: ' .
+            implode(',', array_map('strval', array_keys($payload)))
+        );
+
+        return [];
+    }
+
+    private function logSubscriptionRequestException(RequestException $exception, string $prefix): void
+    {
+        $msg = $exception->hasResponse()
+            ? (string) $exception->getResponse()->getBody()
+            : $exception->getMessage();
+
+        $this->context->getLog()->error(
+            sprintf(
+                '%s: %s. Code: %s. Whole object: %s',
+                $prefix,
+                $msg,
+                (string) $exception->getCode(),
+                json_encode($exception)
+            )
+        );
     }
 
     /**
@@ -696,12 +883,18 @@ class SubscriptionService
 
     private function buildAppResourceUrl(string $resource = ''): string
     {
+        $orgId = ConfigApp::$orgId ?? '';
+
+        if ($orgId === '') {
+            throw new RuntimeException('ConfigApp::$orgId must be configured to build billing URLs.');
+        }
+
         $appUrn = $this->getAppUrn();
         $base = rtrim(self::POYNT_BILLING_BASE, '/');
-
         $resourcePath = ltrim($resource, '/');
-        $suffix = $resourcePath === '' ? '' : '/' . $resourcePath;
 
-        return sprintf('%s/%s%s', $base, $appUrn, $suffix);
+        $url = sprintf('%s/%s/apps/%s', $base, $orgId, $appUrn);
+
+        return $resourcePath === '' ? $url : $url . '/' . $resourcePath;
     }
 }
