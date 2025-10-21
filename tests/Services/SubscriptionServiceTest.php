@@ -25,6 +25,7 @@ namespace Services {
     use GuzzleHttp\HandlerStack;
     use GuzzleHttp\Psr7\Request;
     use GuzzleHttp\Psr7\Response;
+    use GuzzleHttp\Middleware;
     use Monolog\Handler\TestHandler;
     use Monolog\Logger;
     use PHPUnit\Framework\TestCase;
@@ -41,6 +42,9 @@ namespace Services {
         /** @var Connection&\PHPUnit\Framework\MockObject\MockObject */
         private Connection $connection;
 
+        /** @var array<int, array<string, mixed>> */
+        private array $history = [];
+
         protected function setUp(): void
         {
             parent::setUp();
@@ -55,6 +59,107 @@ namespace Services {
 
             ConfigApp::$orgId = 'test-org';
             ConfigApp::$appId = 'test-app';
+
+            $this->history = [];
+        }
+
+        public function testFetchSubscriptionsSkipsNonArrayEntries(): void
+        {
+            $subscription = [
+                'subscriptionId' => 'sub-1',
+                'businessId' => 'biz-1',
+                'storeId' => 'store-1',
+                'planId' => 'plan-basic',
+                'status' => 'active',
+                'phase' => 'active',
+                'trialStart' => null,
+                'trialEnd' => null,
+                'startAt' => '2024-01-01T00:00:00Z',
+                'currentPeriodEnd' => null,
+                'cancelAtPeriodEnd' => false,
+                'canceledAt' => null,
+            ];
+
+            $this->connection
+                ->expects(self::once())
+                ->method('executeStatement')
+                ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
+                ->willReturn(1);
+
+            $this->connection
+                ->expects(self::never())
+                ->method('fetchAssociative');
+
+            $service = $this->createServiceWithQueue([
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode([
+                        'subscriptions' => [$subscription],
+                        'total' => 1,
+                    ], JSON_THROW_ON_ERROR)
+                ),
+            ]);
+
+            $result = $service->fetchSubscriptions('token', 'biz-1');
+
+            self::assertSame([$subscription], $result);
+            self::assertCount(1, $this->history);
+            self::assertSame('Bearer token', $this->history[0]['request']->getHeaderLine('Authorization'));
+        }
+
+        public function testFetchSubscriptionsRetriesWithMerchantTokenWhenBusinessClaimMissing(): void
+        {
+            $subscription = [
+                'subscriptionId' => 'sub-1',
+                'businessId' => 'biz-1',
+                'storeId' => 'store-1',
+                'planId' => 'plan-basic',
+                'status' => 'active',
+                'phase' => 'active',
+                'trialStart' => null,
+                'trialEnd' => null,
+                'startAt' => '2024-01-01T00:00:00Z',
+                'currentPeriodEnd' => null,
+                'cancelAtPeriodEnd' => false,
+                'canceledAt' => null,
+            ];
+
+            $this->connection
+                ->expects(self::once())
+                ->method('executeStatement')
+                ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
+                ->willReturn(1);
+
+            $this->connection
+                ->expects(self::once())
+                ->method('fetchAssociative')
+                ->willReturn(['access_token' => 'merchant-token']);
+
+            $errorBody = json_encode([
+                'code' => 'UNAUTHORIZED_ACCESS',
+                'httpStatus' => 401,
+                'message' => 'Access not authorized for the requested resource.',
+                'developerMessage' => 'The businessId must be present in the JWT',
+                'requestId' => 'test-request',
+            ], JSON_THROW_ON_ERROR);
+
+            $service = $this->createServiceWithQueue([
+                new Response(401, ['Content-Type' => 'application/json'], $errorBody),
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode(['subscriptions' => [$subscription]], JSON_THROW_ON_ERROR)
+                ),
+            ]);
+
+            $result = $service->fetchSubscriptions('app-token', 'biz-1');
+
+            self::assertSame([$subscription], $result);
+            self::assertCount(2, $this->history);
+            self::assertSame('Bearer app-token', $this->history[0]['request']->getHeaderLine('Authorization'));
+            self::assertSame('Bearer merchant-token', $this->history[1]['request']->getHeaderLine('Authorization'));
+            self::assertTrue($this->testHandler->hasInfoThatContains('Retrying subscription fetch with merchant token'));
         }
 
         public function testFetchSubscriptionsSkipsNonArrayEntries(): void
@@ -146,9 +251,11 @@ namespace Services {
         {
             $mockHandler = new MockHandler($queue);
             $handlerStack = HandlerStack::create($mockHandler);
+            $handlerStack->push(Middleware::history($this->history));
             $client = new Client([
                 'handler' => $handlerStack,
                 'base_uri' => SubscriptionService::POYNT_BILLING_BASE,
+                'http_errors' => true,
             ]);
 
             return new SubscriptionService($this->context, null, null, $client);
