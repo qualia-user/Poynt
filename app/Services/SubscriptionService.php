@@ -12,6 +12,7 @@ use DateInterval;
 use DateTime;
 use DateTimeZone;
 use Exception;
+use InvalidArgumentException;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
@@ -146,16 +147,12 @@ class SubscriptionService
     ): ?array {
         $endpoint = $this->buildAppResourceUrl('subscriptions');
 
-        $query = ['businessId' => $businessId];
-        if ($storeId) {
-            $query['storeId'] = $storeId;
-        }
-        if ($deviceId) {
-            $query['deviceId'] = $deviceId;
-        }
-        if ($status) {
-            $query['status'] = $status;
-        }
+        $query = array_filter([
+            'businessId' => $businessId,
+            'storeId'    => $storeId,
+            'deviceId'   => $deviceId,
+            'status'     => $status,
+        ], static fn($value) => $value !== null && $value !== '');
 
         try {
             $response = $this->http->get($endpoint, [
@@ -350,7 +347,10 @@ class SubscriptionService
         bool        $replaceV2 = false,
         ?string     $startAt = null
     ): array {
-        $orgId = ConfigApp::$orgId;
+        $orgId = ConfigApp::$orgId ?? '';
+        if ($orgId === '') {
+            throw new RuntimeException('ConfigApp::$orgId must be configured to create subscriptions.');
+        }
         $endpoint = $this->buildAppResourceUrl('subscriptions');
 
         // If startAt is not provided, use current UTC
@@ -420,11 +420,21 @@ class SubscriptionService
      */
     public function fetchSubscriptions(
         string $appAccessToken,
-        string $businessId
+        string $businessId,
+        ?string $storeId = null,
+        ?string $deviceId = null,
+        ?string $status = null
     ): array {
-        $query = [
+        if ($businessId === '') {
+            throw new InvalidArgumentException('Business ID must be provided to fetch subscriptions.');
+        }
+
+        $query = array_filter([
             'businessId' => $businessId,
-        ];
+            'storeId'    => $storeId,
+            'deviceId'   => $deviceId,
+            'status'     => $status,
+        ], static fn($value) => $value !== null && $value !== '');
 
         try {
             $decoded = $this->performSubscriptionFetch($appAccessToken, $query);
