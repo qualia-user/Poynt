@@ -415,7 +415,7 @@ class SubscriptionService
      *
      * @param string $appAccessToken  App-level OAuth token (will fall back to a stored merchant token if required)
      * @param string $businessId      Poynt business ID
-     * @return array  List of subscription objects (decoded JSON)
+     * @return array<int, array<string, mixed>>|null  List of subscription objects (decoded JSON) or null when request fails
      * @throws RuntimeException on HTTP/decoding error
      */
     public function fetchSubscriptions(
@@ -424,7 +424,7 @@ class SubscriptionService
         ?string $storeId = null,
         ?string $deviceId = null,
         ?string $status = null
-    ): array {
+    ): ?array {
         if ($businessId === '') {
             throw new InvalidArgumentException('Business ID must be provided to fetch subscriptions.');
         }
@@ -444,16 +444,16 @@ class SubscriptionService
             if ($decoded === null) {
                 $this->logSubscriptionRequestException($e, 'Poynt GET subscription failed');
 
-                return [];
+                return null;
             }
         } catch (JsonException $e) {
             $this->context->getLog()->error('Poynt GET subscription returned invalid JSON: ' . $e->getMessage());
 
-            return [];
+            return null;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error('Poynt GET subscription failed: ' . $e->getMessage());
 
-            return [];
+            return null;
         }
 
         $respList = $this->normalizeSubscriptionList($decoded);

@@ -69,8 +69,8 @@ class Api
 
         $this->requestId = $requestId;
 
-        // Determine HTTP method
-        $this->method = $_SERVER['REQUEST_METHOD'];
+        // Determine HTTP method, defaulting to CLI when invoked outside HTTP context
+        $this->method = $_SERVER['REQUEST_METHOD'] ?? 'CLI';
 
         // Handle custom HTTP methods
         if ($this->method === 'POST' && isset($_SERVER['HTTP_X_HTTP_METHOD'])) {
