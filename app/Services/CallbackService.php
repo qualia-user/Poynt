@@ -54,10 +54,22 @@ class CallbackService
         $businessId = $handler->getBusinessId();
         $storeId = $handler->getStoreId();
 
-        // TODO
-        $this->startTrialIfMissing($businessId, $storeId);
+        $appAccessToken = $this->extractAccessToken($appToken);
+        $merchantAccessToken = $this->extractAccessToken($merchantToken);
 
         if ($businessId) {
+            if ($this->installationExists($businessId)) {
+                $this->reactivateInstallation($businessId);
+            } else {
+                $this->startTrialIfMissing($businessId, $storeId);
+            }
+
+            $this->synchronizeStoresAndSubscriptions(
+                $businessId,
+                $appAccessToken,
+                $merchantAccessToken
+            );
+
             $this->gatherInitialResources($businessId);
         } else {
             $this->context->getLog()->warning('Skipping onboarding sync: missing businessId in callback response.');
@@ -70,6 +82,239 @@ class CallbackService
             'status' => Response::STATUS_OK,
             'message' => 'Callback handled',
         ];
+    }
+
+    private function installationExists(string $businessId): bool
+    {
+        try {
+            $existing = $this->context->getConn()->fetchOne(
+                'SELECT 1 FROM business WHERE business_id = ? LIMIT 1',
+                [$businessId]
+            );
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('Failed to verify existing installation for business %s: %s', $businessId, $e->getMessage())
+            );
+
+            return false;
+        }
+
+        return $existing !== false && $existing !== null;
+    }
+
+    private function reactivateInstallation(string $businessId): void
+    {
+        $this->markBusinessActive($businessId);
+        $this->reactivateLocalSubscriptions($businessId);
+    }
+
+    private function markBusinessActive(string $businessId): void
+    {
+        try {
+            $updated = $this->context->getConn()->executeStatement(
+                'UPDATE business SET active = TRUE, updated_at = NOW() WHERE business_id = ?',
+                [$businessId]
+            );
+
+            if ($updated === 0) {
+                $this->context->getLog()->info(
+                    sprintf('Business %s not found during reactivation, will populate via onboarding sync.', $businessId)
+                );
+            }
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('Failed to mark business %s as active: %s', $businessId, $e->getMessage())
+            );
+        }
+    }
+
+    private function reactivateLocalSubscriptions(string $businessId): void
+    {
+        try {
+            $subscriptions = $this->context->getConn()->fetchAllAssociative(
+                'SELECT subscription_id, store_id FROM subscription WHERE business_id = ?',
+                [$businessId]
+            );
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('Failed to load subscriptions for business %s during reactivation: %s', $businessId, $e->getMessage())
+            );
+
+            return;
+        }
+
+        if (empty($subscriptions)) {
+            return;
+        }
+
+        $subscriptionService = $this->serviceFactory->subscription();
+
+        foreach ($subscriptions as $subscription) {
+            $subscriptionId = $subscription['subscription_id'] ?? null;
+            $storeId = $subscription['store_id'] ?? null;
+
+            if (!$subscriptionId || !$storeId) {
+                continue;
+            }
+
+            $subscriptionService->activateSubscription($subscriptionId, $businessId, $storeId);
+        }
+    }
+
+    private function synchronizeStoresAndSubscriptions(
+        string $businessId,
+        ?string $appAccessToken,
+        ?string $merchantAccessToken
+    ): void {
+        $storeService = $this->serviceFactory->store($businessId);
+        $storesPayload = $storeService->fetchByBusinessId($businessId);
+
+        if (!is_array($storesPayload) || $storesPayload === []) {
+            return;
+        }
+
+        $normalizedStores = $this->normalizeResourceItems($storesPayload);
+        if (empty($normalizedStores['items'])) {
+            return;
+        }
+
+        $subscriptionService = $this->serviceFactory->subscription($businessId);
+        $planId = null;
+
+        if ($appAccessToken) {
+            $plans = $subscriptionService->fetchPlans($appAccessToken);
+            $planId = $this->selectDefaultPlanId($plans);
+        }
+
+        foreach ($normalizedStores['items'] as $storeData) {
+            if (!is_array($storeData)) {
+                continue;
+            }
+
+            $storeId = $storeData['id'] ?? $storeData['storeId'] ?? null;
+            if (!$storeId) {
+                continue;
+            }
+
+            if (!isset($storeData['businessId'])) {
+                $storeData['businessId'] = $businessId;
+            }
+
+            $storeService->upsert($storeData);
+
+            $this->ensureStoreSubscription(
+                $businessId,
+                $storeId,
+                $appAccessToken,
+                $merchantAccessToken,
+                $planId
+            );
+        }
+    }
+
+    private function ensureStoreSubscription(
+        string $businessId,
+        string $storeId,
+        ?string $appAccessToken,
+        ?string $merchantAccessToken,
+        ?string $defaultPlanId
+    ): void {
+        $subscriptionService = $this->serviceFactory->subscription($businessId, $storeId);
+
+        $existing = [];
+
+        if ($appAccessToken) {
+            $existing = $subscriptionService->fetchSubscriptions($appAccessToken, $businessId, $storeId);
+        }
+
+        if (empty($existing) && $merchantAccessToken) {
+            $existing = $subscriptionService->fetchMerchantSubscriptions($merchantAccessToken, $businessId, $storeId) ?? [];
+
+            foreach ($existing as $subscription) {
+                if (is_array($subscription)) {
+                    $subscriptionService->upsertLocalSubscription($subscription);
+                }
+            }
+        }
+
+        if (!empty($existing)) {
+            return;
+        }
+
+        if (!$appAccessToken || !$defaultPlanId) {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'Unable to create subscription for business %s store %s: missing app token or plan.',
+                    $businessId,
+                    $storeId
+                )
+            );
+
+            return;
+        }
+
+        $subscriptionService->createSubscription(
+            $appAccessToken,
+            $businessId,
+            $storeId,
+            $defaultPlanId
+        );
+    }
+
+    private function extractAccessToken(mixed $token): ?string
+    {
+        if (!is_array($token)) {
+            return null;
+        }
+
+        foreach (['accessToken', 'access_token'] as $key) {
+            $value = $token[$key] ?? null;
+            if (is_string($value) && $value !== '') {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    private function selectDefaultPlanId(?array $plans): ?string
+    {
+        if (!is_array($plans) || $plans === []) {
+            return null;
+        }
+
+        if (isset($plans['plans']) && is_array($plans['plans'])) {
+            $plans = $plans['plans'];
+        } elseif (!array_is_list($plans)) {
+            $plans = array_values(array_filter($plans, 'is_array'));
+        }
+
+        foreach ($plans as $plan) {
+            if (!is_array($plan)) {
+                continue;
+            }
+
+            $planId = $plan['planId'] ?? $plan['id'] ?? null;
+            if (!$planId) {
+                continue;
+            }
+
+            $status = strtolower((string)($plan['status'] ?? ''));
+            if ($status === '' || in_array($status, ['active', 'enabled'], true)) {
+                return $planId;
+            }
+        }
+
+        foreach ($plans as $plan) {
+            if (is_array($plan)) {
+                $planId = $plan['planId'] ?? $plan['id'] ?? null;
+                if ($planId) {
+                    return $planId;
+                }
+            }
+        }
+
+        return null;
     }
 
     private function startTrialIfMissing(?string $businessId, ?string $storeId): void

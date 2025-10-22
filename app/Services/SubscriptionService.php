@@ -307,7 +307,7 @@ class SubscriptionService
                 'biz'    => $businessId,
                 'store'  => $storeId,
                 'plan'   => $trialPlanId,
-                'status' => 'trialing',
+                'status' => 'free_trial',
                 'phase'  => 'trial',
                 'tstart' => $now->format('Y-m-d H:i:sP'),
                 'tend'   => $trialEnd->format('Y-m-d H:i:sP'),

@@ -240,7 +240,7 @@ namespace Controllers {
 
             self::assertSame([
                 'subscriptionId' => 'sub-456',
-                'status' => 'trialing',
+                'status' => 'free_trial',
             ], $result);
         }
 
