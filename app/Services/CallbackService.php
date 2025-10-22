@@ -379,33 +379,24 @@ class CallbackService
             }
         }
 
+        $localSubscriptions = $this->getLocalSubscriptionsForStore($businessId, $storeId);
+
+        if ($localSubscriptions === null) {
+            return false;
+        }
+
+        $this->logSubscriptionComparison(
+            $businessId,
+            $storeId,
+            $matchingSubscriptions,
+            $localSubscriptions
+        );
+
         if (!empty($matchingSubscriptions)) {
             return true;
         }
 
-        $localSubscriptionExists = $this->storeHasSubscription($businessId, $storeId);
-
-        if ($localSubscriptionExists === null) {
-            $this->context->getLog()->warning(
-                sprintf(
-                    'Unable to verify existing subscription for business %s store %s due to lookup failure.',
-                    $businessId,
-                    $storeId
-                )
-            );
-
-            return false;
-        }
-
-        if ($localSubscriptionExists) {
-            $this->context->getLog()->info(
-                sprintf(
-                    'Local subscription already present for business %s store %s, skipping remote creation.',
-                    $businessId,
-                    $storeId
-                )
-            );
-
+        if (!empty($localSubscriptions)) {
             return true;
         }
 
@@ -883,6 +874,142 @@ class CallbackService
         }
 
         return null;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>|null
+     */
+    private function getLocalSubscriptionsForStore(string $businessId, string $storeId): ?array
+    {
+        try {
+            $rows = $this->context->getConn()->fetchAllAssociative(
+                'SELECT subscription_id, plan_id, status FROM subscription WHERE business_id = ? AND store_id = ?',
+                [$businessId, $storeId]
+            );
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'Failed to load local subscriptions for business %s store %s: %s',
+                    $businessId,
+                    $storeId,
+                    $e->getMessage()
+                )
+            );
+
+            return null;
+        }
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * @param array<int, array<mixed>> $remoteSubscriptions
+     * @param array<int, array<string, mixed>> $localSubscriptions
+     */
+    private function logSubscriptionComparison(
+        string $businessId,
+        string $storeId,
+        array $remoteSubscriptions,
+        array $localSubscriptions
+    ): void {
+        $remoteIds = $this->extractRemoteSubscriptionIds($remoteSubscriptions);
+        $localIds = $this->extractLocalSubscriptionIds($localSubscriptions);
+
+        sort($remoteIds);
+        sort($localIds);
+
+        if ($remoteIds === $localIds) {
+            $this->context->getLog()->debug(
+                sprintf(
+                    'Subscription comparison aligned for business %s store %s (%d subscription(s)).',
+                    $businessId,
+                    $storeId,
+                    count($remoteIds)
+                ),
+                [
+                    'businessId' => $businessId,
+                    'storeId' => $storeId,
+                    'remoteSubscriptionIds' => $remoteIds,
+                    'localSubscriptionIds' => $localIds,
+                ]
+            );
+
+            return;
+        }
+
+        $missingLocally = array_values(array_diff($remoteIds, $localIds));
+        if (!empty($missingLocally)) {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'Remote subscription(s) missing locally for business %s store %s.',
+                    $businessId,
+                    $storeId
+                ),
+                [
+                    'businessId' => $businessId,
+                    'storeId' => $storeId,
+                    'remoteOnlySubscriptionIds' => $missingLocally,
+                ]
+            );
+        }
+
+        $missingRemotely = array_values(array_diff($localIds, $remoteIds));
+        if (!empty($missingRemotely)) {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'Local subscription(s) missing from Poynt for business %s store %s.',
+                    $businessId,
+                    $storeId
+                ),
+                [
+                    'businessId' => $businessId,
+                    'storeId' => $storeId,
+                    'localOnlySubscriptionIds' => $missingRemotely,
+                ]
+            );
+        }
+    }
+
+    /**
+     * @param array<int, array<mixed>> $remoteSubscriptions
+     * @return array<int, string>
+     */
+    private function extractRemoteSubscriptionIds(array $remoteSubscriptions): array
+    {
+        $ids = [];
+
+        foreach ($remoteSubscriptions as $subscription) {
+            if (!is_array($subscription)) {
+                continue;
+            }
+
+            $id = $subscription['subscriptionId'] ?? null;
+
+            if (is_string($id) && $id !== '') {
+                $ids[] = $id;
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $localSubscriptions
+     * @return array<int, string>
+     */
+    private function extractLocalSubscriptionIds(array $localSubscriptions): array
+    {
+        $ids = [];
+
+        foreach ($localSubscriptions as $subscription) {
+            $id = $subscription['subscription_id'] ?? null;
+
+            if (is_string($id) && $id !== '') {
+                $ids[] = $id;
+            }
+        }
+
+        return array_values(array_unique($ids));
     }
 
     private function storeHasSubscription(string $businessId, string $storeId): ?bool
