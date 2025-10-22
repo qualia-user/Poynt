@@ -44,14 +44,14 @@ class TerminalService
             $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
             foreach ($devices as $device) {
-                if (!isset($device['id'])) {
+                if (!isset($device['deviceId'])) {
                     $this->context->getLog()->error(
                         'TerminalService::upsertTerminals: missing device id'
                     );
                     return false;
                 }
 
-                $terminalId = $device['id'];
+                $terminalId = $device['deviceId'];
                 $metadata   = Format::jsonObject($device);
 
                 $affected = $stmt->executeStatement([
