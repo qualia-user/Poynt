@@ -328,7 +328,7 @@ class SubscriptionService
     /**
      * Creates a new paid subscription on Poynt (POST) and upserts the result into local DB.
      *
-     * @param string $appAccessToken App-level OAuth token
+     * @param string $merchantAccessToken Merchant-level OAuth token
      * @param string $businessId Poynt business ID
      * @param string $storeId Poynt store ID
      * @param string $planId Poynt plan ID (e.g. "plan_basic_monthly")
@@ -340,7 +340,7 @@ class SubscriptionService
      * @throws GuzzleException
      */
     public function createSubscription(
-        string      $accessToken,
+        string      $merchantAccessToken,
         string      $businessId,
         string      $storeId,
         string      $planId,
@@ -351,6 +351,12 @@ class SubscriptionService
         if ($orgId === '') {
             throw new RuntimeException('ConfigApp::$orgId must be configured to create subscriptions.');
         }
+        if ($merchantAccessToken === '') {
+            $this->context->getLog()->error('Cannot create subscription without a merchant access token.');
+
+            return [];
+        }
+
         $endpoint = $this->buildAppResourceUrl('subscriptions');
 
         // If startAt is not provided, use current UTC
@@ -369,7 +375,7 @@ class SubscriptionService
         try {
             $response = $this->http->post($endpoint, [
                 'headers' => [
-                    'Authorization' => 'Bearer ' . $accessToken,
+                    'Authorization' => 'Bearer ' . $merchantAccessToken,
                     'Accept'        => 'application/json',
                     'Content-Type'  => 'application/json',
                 ],
