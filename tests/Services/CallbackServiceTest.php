@@ -8,6 +8,7 @@ use App\Core\Context;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Services\CallbackService;
 use App\Services\ServiceFactory;
+use Doctrine\DBAL\Connection;
 use Monolog\Logger;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -101,10 +102,103 @@ class CallbackServiceTest extends TestCase
 
         $method = new ReflectionMethod($callbackService, 'syncResourceCollection');
         $method->setAccessible(true);
-        $method->invoke($callbackService, 'business-123', $service);
+        $result = $method->invoke($callbackService, 'business-123', $service);
 
         $this->assertSame([
             ['id' => 'product-1', 'businessId' => 'business-123'],
         ], $service->upserted);
+        $this->assertTrue($result);
+    }
+
+    public function testPurgeAndReinstallValidatesTokenPayload(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $logger->expects($this->once())
+            ->method('error')
+            ->with($this->stringContains('missing accessToken'));
+
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+        $context->method('getConn')->willReturn($this->createMock(Connection::class));
+
+        $platformRegistry = $this->createMock(PlatformRegistry::class);
+        $serviceFactory = $this->createMock(ServiceFactory::class);
+
+        $callbackService = new CallbackService($context, $platformRegistry, $serviceFactory);
+
+        $result = $callbackService->purgeAndReinstall(
+            'business-123',
+            'store-456',
+            ['refreshToken' => 'refresh', 'expiresIn' => 3600],
+            ['accessToken' => 'merchant', 'refreshToken' => 'merchant-refresh', 'expiresIn' => 3600]
+        );
+
+        $this->assertFalse($result);
+    }
+
+    public function testPurgeBusinessRemovesTokensWhenRequested(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $capturedStatements = [];
+
+        $connection = $this->createMock(Connection::class);
+        $connection->expects($this->once())->method('beginTransaction');
+        $connection->method('executeStatement')->willReturnCallback(
+            function (string $statement, array $params) use (&$capturedStatements) {
+                $capturedStatements[] = $statement;
+
+                return 1;
+            }
+        );
+        $connection->expects($this->once())->method('commit');
+
+        $context->method('getConn')->willReturn($connection);
+
+        $callbackService = new CallbackService(
+            $context,
+            $this->createMock(PlatformRegistry::class),
+            $this->createMock(ServiceFactory::class)
+        );
+
+        $callbackService->purgeBusiness('business-123', false);
+
+        $this->assertContains('DELETE FROM app_token WHERE business_id = :biz', $capturedStatements);
+        $this->assertContains('DELETE FROM merchant_token WHERE business_id = :biz', $capturedStatements);
+    }
+
+    public function testPurgeBusinessPreservesTokensByDefault(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $capturedStatements = [];
+
+        $connection = $this->createMock(Connection::class);
+        $connection->expects($this->once())->method('beginTransaction');
+        $connection->method('executeStatement')->willReturnCallback(
+            function (string $statement, array $params) use (&$capturedStatements) {
+                $capturedStatements[] = $statement;
+
+                return 1;
+            }
+        );
+        $connection->expects($this->once())->method('commit');
+
+        $context->method('getConn')->willReturn($connection);
+
+        $callbackService = new CallbackService(
+            $context,
+            $this->createMock(PlatformRegistry::class),
+            $this->createMock(ServiceFactory::class)
+        );
+
+        $callbackService->purgeBusiness('business-123');
+
+        $this->assertNotContains('DELETE FROM app_token WHERE business_id = :biz', $capturedStatements);
+        $this->assertNotContains('DELETE FROM merchant_token WHERE business_id = :biz', $capturedStatements);
     }
 }
