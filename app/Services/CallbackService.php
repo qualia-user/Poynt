@@ -208,7 +208,7 @@ class CallbackService
     {
         try {
             $existing = $this->context->getConn()->fetchOne(
-                'SELECT 1 FROM business WHERE business_id = ? LIMIT 1',
+                'SELECT 1 FROM business WHERE business_id = ? AND active = TRUE ORDER BY updated_at DESC LIMIT 1',
                 [$businessId]
             );
         } catch (Throwable $e) {
@@ -418,7 +418,32 @@ class CallbackService
                 )
             );
 
-            return false;
+            try {
+                $fallbackSubscriptionId = $subscriptionService->startFreeTrial($businessId, $storeId);
+                $this->context->getLog()->info(
+                    sprintf(
+                        'Started local free trial %s for business %s store %s as a fallback.',
+                        $fallbackSubscriptionId,
+                        $businessId,
+                        $storeId
+                    )
+                );
+            } catch (Throwable $e) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'Failed to create fallback trial subscription for business %s store %s: %s',
+                        $businessId,
+                        $storeId,
+                        $e->getMessage()
+                    )
+                );
+
+                return false;
+            }
+
+            $hasSubscription = $this->storeHasSubscription($businessId, $storeId);
+
+            return $hasSubscription === true;
         }
 
         $created = $subscriptionService->createSubscription(
