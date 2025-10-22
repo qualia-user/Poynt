@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Core\Context;
 use App\Core\Response;
 use App\Modules\OAuth\PlatformRegistry;
+use App\Modules\OAuth\OAuthHandlerInterface;
 use Throwable;
 
 class CallbackService
@@ -24,21 +25,80 @@ class CallbackService
     }
 
     /**
-     * Handle OAuth callback for a platform.
+     * Handle the OAuth callback lifecycle for a platform:
+     *   1. Resolve the platform-specific handler.
+     *   2. Retrieve and persist OAuth tokens.
+     *   3. Execute the onboarding workflow for the business.
+     *   4. Register any required webhooks.
      */
     public function handle(string $platform): array
     {
-        try {
-            $handler = $this->platformRegistry->getHandler($platform);
-        } catch (\InvalidArgumentException $e) {
+        $handlerResult = $this->resolveHandler($platform);
+        if (isset($handlerResult['error'])) {
             return [
                 'success' => false,
                 'status' => Response::STATUS_BAD_REQUEST,
-                'error' => $e->getMessage(),
+                'error' => $handlerResult['error'],
             ];
         }
 
+        /** @var OAuthHandlerInterface $handler */
+        $handler = $handlerResult['handler'];
+
+        $tokenResult = $this->acquireTokens($handler);
+        if (!($tokenResult['success'] ?? false)) {
+            return [
+                'success' => false,
+                'status' => $tokenResult['status'] ?? Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => $tokenResult['error'] ?? 'Token exchange failed.',
+            ];
+        }
+
+        $this->runBusinessWorkflow(
+            $handler->getBusinessId(),
+            $handler->getStoreId(),
+            $tokenResult['appToken'] ?? [],
+            $tokenResult['merchantToken'] ?? []
+        );
+
+        $handler->registerWebhooks();
+
+        return [
+            'success' => true,
+            'status' => Response::STATUS_OK,
+            'message' => 'Callback handled',
+        ];
+    }
+
+    /**
+     * Resolve the correct platform handler or capture the failure reason.
+     *
+     * @return array{handler: OAuthHandlerInterface}|array{error: string}
+     */
+    private function resolveHandler(string $platform): array
+    {
+        try {
+            return ['handler' => $this->platformRegistry->getHandler($platform)];
+        } catch (\InvalidArgumentException $e) {
+            return ['error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Retrieve and persist the OAuth tokens for the platform handler.
+     *
+     * @return array{
+     *     success: bool,
+     *     appToken?: mixed,
+     *     merchantToken?: mixed,
+     *     status?: int,
+     *     error?: string
+     * }
+     */
+    private function acquireTokens(OAuthHandlerInterface $handler): array
+    {
         $tokenResponse = $handler->retrieveTokens();
+
         if (!($tokenResponse['success'] ?? false)) {
             return [
                 'success' => false,
@@ -51,37 +111,41 @@ class CallbackService
         $merchantToken = $tokenResponse['data']['merchantAccessToken'] ?? [];
         $handler->storeTokens($appToken, $merchantToken);
 
-        $businessId = $handler->getBusinessId();
-        $storeId = $handler->getStoreId();
-
-        $appAccessToken = $this->extractAccessToken($appToken);
-        $merchantAccessToken = $this->extractAccessToken($merchantToken);
-
-        if ($businessId) {
-            if ($this->installationExists($businessId)) {
-                $this->reactivateInstallation($businessId);
-            } else {
-                $this->startTrialIfMissing($businessId, $storeId);
-            }
-
-            $this->synchronizeStoresAndSubscriptions(
-                $businessId,
-                $appAccessToken,
-                $merchantAccessToken
-            );
-
-            $this->gatherInitialResources($businessId);
-        } else {
-            $this->context->getLog()->warning('Skipping onboarding sync: missing businessId in callback response.');
-        }
-
-        $handler->registerWebhooks();
-
         return [
             'success' => true,
-            'status' => Response::STATUS_OK,
-            'message' => 'Callback handled',
+            'appToken' => $appToken,
+            'merchantToken' => $merchantToken,
         ];
+    }
+
+    /**
+     * Execute the onboarding workflow for the business if identifiers are present.
+     */
+    private function runBusinessWorkflow(
+        ?string $businessId,
+        ?string $storeId,
+        mixed $appToken,
+        mixed $merchantToken
+    ): void {
+        if (!$businessId) {
+            $this->context->getLog()->warning('Skipping onboarding sync: missing businessId in callback response.');
+
+            return;
+        }
+
+        if ($this->installationExists($businessId)) {
+            $this->reactivateInstallation($businessId);
+        } else {
+            $this->startTrialIfMissing($businessId, $storeId);
+        }
+
+        $this->synchronizeStoresAndSubscriptions(
+            $businessId,
+            $this->extractAccessToken($appToken),
+            $this->extractAccessToken($merchantToken)
+        );
+
+        $this->gatherInitialResources($businessId);
     }
 
     private function installationExists(string $businessId): bool
@@ -222,22 +286,51 @@ class CallbackService
         $subscriptionService = $this->serviceFactory->subscription($businessId, $storeId);
 
         $existing = [];
+        $matchingSubscriptions = [];
 
         if ($appAccessToken) {
             $existing = $subscriptionService->fetchSubscriptions($appAccessToken, $businessId, $storeId);
+            $matchingSubscriptions = $this->filterSubscriptionsForStore($existing, $storeId);
         }
 
-        if (empty($existing) && $merchantAccessToken) {
+        if (empty($matchingSubscriptions) && $merchantAccessToken) {
             $existing = $subscriptionService->fetchMerchantSubscriptions($merchantAccessToken, $businessId, $storeId) ?? [];
+            $matchingSubscriptions = $this->filterSubscriptionsForStore($existing, $storeId);
 
-            foreach ($existing as $subscription) {
+            foreach ($matchingSubscriptions as $subscription) {
                 if (is_array($subscription)) {
                     $subscriptionService->upsertLocalSubscription($subscription);
                 }
             }
         }
 
-        if (!empty($existing)) {
+        if (!empty($matchingSubscriptions)) {
+            return;
+        }
+
+        $localSubscriptionExists = $this->storeHasSubscription($businessId, $storeId);
+
+        if ($localSubscriptionExists === null) {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'Unable to verify existing subscription for business %s store %s due to lookup failure.',
+                    $businessId,
+                    $storeId
+                )
+            );
+
+            return;
+        }
+
+        if ($localSubscriptionExists) {
+            $this->context->getLog()->info(
+                sprintf(
+                    'Local subscription already present for business %s store %s, skipping remote creation.',
+                    $businessId,
+                    $storeId
+                )
+            );
+
             return;
         }
 
@@ -324,24 +417,21 @@ class CallbackService
             return;
         }
 
-        try {
-            $existing = $this->context->getConn()->fetchAssociative(
-                'SELECT subscription_id FROM subscription WHERE business_id = ? AND store_id = ? LIMIT 1',
-                [$businessId, $storeId]
-            );
-        } catch (Throwable $e) {
-            $this->context->getLog()->error(
+        $existingSubscription = $this->storeHasSubscription($businessId, $storeId);
+
+        if ($existingSubscription === null) {
+            $this->context->getLog()->warning(
                 sprintf(
-                    'Failed to verify existing subscription for business %s store %s: %s',
+                    'Skipping free trial creation for business %s store %s: unable to determine existing subscriptions.',
                     $businessId,
-                    $storeId,
-                    $e->getMessage()
+                    $storeId
                 )
             );
+
             return;
         }
 
-        if ($existing) {
+        if ($existingSubscription) {
             $this->context->getLog()->info(
                 sprintf(
                     'Subscription already exists for business %s store %s, skipping free trial.',
@@ -506,5 +596,77 @@ class CallbackService
                 'links' => $links,
             ]
         );
+    }
+
+    /**
+     * Determine whether the supplied subscription payload includes the given store ID.
+     *
+     * @param mixed $payload
+     * @param string $storeId
+     * @return array<int, array<mixed>>
+     */
+    private function filterSubscriptionsForStore(mixed $payload, string $storeId): array
+    {
+        if (!is_array($payload) || $payload === []) {
+            return [];
+        }
+
+        $normalized = $this->normalizeResourceItems($payload);
+        $matches = [];
+
+        foreach ($normalized['items'] as $subscription) {
+            if (!is_array($subscription)) {
+                continue;
+            }
+
+            $subscriptionStoreId = $this->resolveSubscriptionStoreId($subscription);
+
+            if ($subscriptionStoreId === $storeId) {
+                $matches[] = $subscription;
+            }
+        }
+
+        return $matches;
+    }
+
+    private function resolveSubscriptionStoreId(array $subscription): ?string
+    {
+        $directStoreId = $subscription['storeId'] ?? null;
+        if (is_string($directStoreId) && $directStoreId !== '') {
+            return $directStoreId;
+        }
+
+        $embeddedStore = $subscription['store'] ?? null;
+        if (is_array($embeddedStore)) {
+            $embeddedId = $embeddedStore['id'] ?? $embeddedStore['storeId'] ?? null;
+            if (is_string($embeddedId) && $embeddedId !== '') {
+                return $embeddedId;
+            }
+        }
+
+        return null;
+    }
+
+    private function storeHasSubscription(string $businessId, string $storeId): ?bool
+    {
+        try {
+            $existing = $this->context->getConn()->fetchOne(
+                'SELECT 1 FROM subscription WHERE business_id = ? AND store_id = ? LIMIT 1',
+                [$businessId, $storeId]
+            );
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'Failed to verify existing subscription for business %s store %s: %s',
+                    $businessId,
+                    $storeId,
+                    $e->getMessage()
+                )
+            );
+
+            return null;
+        }
+
+        return $existing !== false && $existing !== null;
     }
 }
