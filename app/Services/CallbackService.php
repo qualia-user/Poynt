@@ -55,11 +55,16 @@ class CallbackService
             ];
         }
 
+        $requestedPlanId = $this->normalizePlanParameter($this->context->getApi()->getParam('planId'));
+        $requestedPlanName = $this->normalizePlanParameter($this->context->getApi()->getParam('planName'));
+
         $workflowSucceeded = $this->runBusinessWorkflow(
             $handler->getBusinessId(),
             $handler->getStoreId(),
             $tokenResult['appToken'] ?? [],
-            $tokenResult['merchantToken'] ?? []
+            $tokenResult['merchantToken'] ?? [],
+            $requestedPlanId,
+            $requestedPlanName
         );
 
         if (!$workflowSucceeded) {
@@ -134,7 +139,9 @@ class CallbackService
         ?string $businessId,
         ?string $storeId,
         mixed $appToken,
-        mixed $merchantToken
+        mixed $merchantToken,
+        ?string $requestedPlanId,
+        ?string $requestedPlanName
     ): bool {
         if (!$businessId) {
             $this->context->getLog()->warning('Skipping onboarding sync: missing businessId in callback response.');
@@ -158,7 +165,13 @@ class CallbackService
             $appAccessToken = $this->extractAccessToken($appToken);
             $merchantAccessToken = $this->extractAccessToken($merchantToken);
 
-            if (!$this->synchronizeStoresAndSubscriptions($businessId, $appAccessToken, $merchantAccessToken)) {
+            if (!$this->synchronizeStoresAndSubscriptions(
+                $businessId,
+                $appAccessToken,
+                $merchantAccessToken,
+                $requestedPlanId,
+                $requestedPlanName
+            )) {
                 throw new RuntimeException(
                     sprintf('Failed to synchronize stores or subscriptions for business %s.', $businessId)
                 );
@@ -284,7 +297,9 @@ class CallbackService
     private function synchronizeStoresAndSubscriptions(
         string $businessId,
         ?string $appAccessToken,
-        ?string $merchantAccessToken
+        ?string $merchantAccessToken,
+        ?string $requestedPlanId,
+        ?string $requestedPlanName
     ): bool {
         $storeService = $this->serviceFactory->store($businessId);
         $storesPayload = $storeService->fetchByBusinessId($businessId);
@@ -303,14 +318,31 @@ class CallbackService
         }
 
         $subscriptionService = $this->serviceFactory->subscription($businessId);
-        $planId = null;
+        $planId = $requestedPlanId;
 
-        if ($appAccessToken) {
+        if ($appAccessToken && $planId === null) {
             $plans = $subscriptionService->fetchPlans($appAccessToken);
             if ($plans === null) {
                 return false;
             }
-            $planId = $this->selectDefaultPlanId($plans);
+
+            if ($requestedPlanName !== null) {
+                $planId = $this->findPlanIdByName($plans, $requestedPlanName);
+
+                if ($planId === null) {
+                    $this->context->getLog()->warning(
+                        sprintf(
+                            'Requested subscription plan "%s" not found for business %s; falling back to default plan.',
+                            $requestedPlanName,
+                            $businessId
+                        )
+                    );
+                }
+            }
+
+            if ($planId === null) {
+                $planId = $this->selectDefaultPlanId($plans);
+            }
         }
 
         foreach ($normalizedStores['items'] as $storeData) {
@@ -447,6 +479,95 @@ class CallbackService
         return $created !== [];
     }
 
+    private function normalizePlanParameter(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (!is_string($value) && !is_numeric($value)) {
+            return null;
+        }
+
+        $normalized = trim((string) $value);
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function collectPlanCandidates(?array $plans): array
+    {
+        if (!is_array($plans) || $plans === []) {
+            return [];
+        }
+
+        $queue = [$plans];
+        $candidates = [];
+
+        while ($queue !== []) {
+            $current = array_shift($queue);
+
+            if (!is_array($current) || $current === []) {
+                continue;
+            }
+
+            $identifier = $current['planId'] ?? $current['id'] ?? null;
+            if ((is_string($identifier) || is_numeric($identifier)) && (string) $identifier !== '') {
+                $id = (string) $identifier;
+                if (!isset($candidates[$id])) {
+                    $candidates[$id] = $current;
+                } else {
+                    $candidates[$id] = array_merge($candidates[$id], $current);
+                }
+            }
+
+            foreach ($current as $value) {
+                if (is_array($value)) {
+                    $queue[] = $value;
+                }
+            }
+        }
+
+        return array_values($candidates);
+    }
+
+    private function extractPlanId(array $plan): ?string
+    {
+        $identifier = $plan['planId'] ?? $plan['id'] ?? null;
+
+        if (is_string($identifier) || is_numeric($identifier)) {
+            $value = trim((string) $identifier);
+
+            return $value === '' ? null : $value;
+        }
+
+        return null;
+    }
+
+    private function findPlanIdByName(?array $plans, string $requestedPlanName): ?string
+    {
+        $requested = strtolower($requestedPlanName);
+        if ($requested === '') {
+            return null;
+        }
+
+        foreach ($this->collectPlanCandidates($plans) as $plan) {
+            $planId = $this->extractPlanId($plan);
+            if ($planId === null) {
+                continue;
+            }
+
+            $name = isset($plan['name']) ? strtolower((string) $plan['name']) : null;
+            if ($name === $requested || strtolower($planId) === $requested) {
+                return $planId;
+            }
+        }
+
+        return null;
+    }
+
     private function extractAccessToken(mixed $token): ?string
     {
         if (!is_array($token)) {
@@ -465,38 +586,28 @@ class CallbackService
 
     private function selectDefaultPlanId(?array $plans): ?string
     {
-        if (!is_array($plans) || $plans === []) {
+        $candidates = $this->collectPlanCandidates($plans);
+
+        if ($candidates === []) {
             return null;
         }
 
-        if (isset($plans['plans']) && is_array($plans['plans'])) {
-            $plans = $plans['plans'];
-        } elseif (!array_is_list($plans)) {
-            $plans = array_values(array_filter($plans, 'is_array'));
-        }
-
-        foreach ($plans as $plan) {
-            if (!is_array($plan)) {
+        foreach ($candidates as $plan) {
+            $planId = $this->extractPlanId($plan);
+            if ($planId === null) {
                 continue;
             }
 
-            $planId = $plan['planId'] ?? $plan['id'] ?? null;
-            if (!$planId) {
-                continue;
-            }
-
-            $status = strtolower((string)($plan['status'] ?? ''));
+            $status = strtolower((string) ($plan['status'] ?? ''));
             if ($status === '' || in_array($status, ['active', 'enabled'], true)) {
                 return $planId;
             }
         }
 
-        foreach ($plans as $plan) {
-            if (is_array($plan)) {
-                $planId = $plan['planId'] ?? $plan['id'] ?? null;
-                if ($planId) {
-                    return $planId;
-                }
+        foreach ($candidates as $plan) {
+            $planId = $this->extractPlanId($plan);
+            if ($planId !== null) {
+                return $planId;
             }
         }
 
