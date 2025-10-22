@@ -411,9 +411,10 @@ class SubscriptionService
 
     /**
      * Fetches all subscriptions for a given businessId from Poynt,
-     * upserts each into the local `subscription` table, and returns the list.
+     * preferring a stored merchant access token when available, then upserts
+     * each into the local `subscription` table, and returns the list.
      *
-     * @param string $appAccessToken  App-level OAuth token (will fall back to a stored merchant token if required)
+     * @param string $appAccessToken  App-level OAuth token (used when no merchant token is available or authorized)
      * @param string $businessId      Poynt business ID
      * @return array<int, array<string, mixed>>|null  List of subscription objects (decoded JSON) or null when request fails
      * @throws RuntimeException on HTTP/decoding error
@@ -436,24 +437,65 @@ class SubscriptionService
             'status'     => $status,
         ], static fn($value) => $value !== null && $value !== '');
 
-        try {
-            $decoded = $this->performSubscriptionFetch($appAccessToken, $query);
-        } catch (RequestException $e) {
-            $decoded = $this->retryFetchSubscriptionsWithMerchantToken($businessId, $query, $e);
+        $decoded = null;
+        $attemptedMerchantFetch = false;
 
-            if ($decoded === null) {
-                $this->logSubscriptionRequestException($e, 'Poynt GET subscription failed');
+        $merchantToken = $this->getStoredMerchantToken($businessId);
+        if ($merchantToken !== null) {
+            $attemptedMerchantFetch = true;
+
+            try {
+                $decoded = $this->performSubscriptionFetch($merchantToken, $query);
+            } catch (RequestException $merchantException) {
+                $response = $merchantException->getResponse();
+                if ($response !== null && $response->getStatusCode() === 401) {
+                    $this->context->getLog()->info(
+                        sprintf(
+                            'Merchant token unauthorized for business %s; retrying subscription fetch with app token',
+                            $businessId
+                        )
+                    );
+                } else {
+                    $this->logSubscriptionRequestException(
+                        $merchantException,
+                        'Poynt GET subscription with merchant token failed'
+                    );
+                }
+            } catch (JsonException $merchantException) {
+                $this->context->getLog()->error(
+                    'Poynt GET subscription with merchant token returned invalid JSON: ' .
+                    $merchantException->getMessage()
+                );
+            } catch (GuzzleException $merchantException) {
+                $this->context->getLog()->error(
+                    'Poynt GET subscription with merchant token failed: ' .
+                    $merchantException->getMessage()
+                );
+            }
+        }
+
+        if ($decoded === null) {
+            try {
+                $decoded = $this->performSubscriptionFetch($appAccessToken, $query);
+            } catch (RequestException $e) {
+                if (!$attemptedMerchantFetch) {
+                    $decoded = $this->retryFetchSubscriptionsWithMerchantToken($businessId, $query, $e);
+                }
+
+                if ($decoded === null) {
+                    $this->logSubscriptionRequestException($e, 'Poynt GET subscription failed');
+
+                    return null;
+                }
+            } catch (JsonException $e) {
+                $this->context->getLog()->error('Poynt GET subscription returned invalid JSON: ' . $e->getMessage());
+
+                return null;
+            } catch (GuzzleException $e) {
+                $this->context->getLog()->error('Poynt GET subscription failed: ' . $e->getMessage());
 
                 return null;
             }
-        } catch (JsonException $e) {
-            $this->context->getLog()->error('Poynt GET subscription returned invalid JSON: ' . $e->getMessage());
-
-            return null;
-        } catch (GuzzleException $e) {
-            $this->context->getLog()->error('Poynt GET subscription failed: ' . $e->getMessage());
-
-            return null;
         }
 
         $respList = $this->normalizeSubscriptionList($decoded);
@@ -507,6 +549,30 @@ class SubscriptionService
             return null;
         }
 
+        $merchantToken = $this->getStoredMerchantToken($businessId);
+        if ($merchantToken === null) {
+            return null;
+        }
+
+        $this->context->getLog()->info(
+            sprintf('Retrying subscription fetch with merchant token for business %s', $businessId)
+        );
+
+        try {
+            return $this->performSubscriptionFetch($merchantToken, $query);
+        } catch (RequestException $retryException) {
+            $this->logSubscriptionRequestException($retryException, 'Poynt GET subscription retry failed');
+        } catch (JsonException $retryException) {
+            $this->context->getLog()->error('Poynt GET subscription retry returned invalid JSON: ' . $retryException->getMessage());
+        } catch (GuzzleException $retryException) {
+            $this->context->getLog()->error('Poynt GET subscription retry failed: ' . $retryException->getMessage());
+        }
+
+        return null;
+    }
+
+    private function getStoredMerchantToken(string $businessId): ?string
+    {
         $tokenService = new TokenService($this->context);
 
         try {
@@ -534,21 +600,7 @@ class SubscriptionService
             return null;
         }
 
-        $this->context->getLog()->info(
-            sprintf('Retrying subscription fetch with merchant token for business %s', $businessId)
-        );
-
-        try {
-            return $this->performSubscriptionFetch($merchantToken, $query);
-        } catch (RequestException $retryException) {
-            $this->logSubscriptionRequestException($retryException, 'Poynt GET subscription retry failed');
-        } catch (JsonException $retryException) {
-            $this->context->getLog()->error('Poynt GET subscription retry returned invalid JSON: ' . $retryException->getMessage());
-        } catch (GuzzleException $retryException) {
-            $this->context->getLog()->error('Poynt GET subscription retry failed: ' . $retryException->getMessage());
-        }
-
-        return null;
+        return $merchantToken;
     }
 
     private function shouldRetryWithMerchantToken(RequestException $exception): bool
