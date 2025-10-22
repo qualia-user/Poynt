@@ -87,9 +87,9 @@ namespace Services {
                 ->willReturn(1);
 
             $this->connection
-                ->expects(self::never())
-                ->method('fetchAssociative');
-
+                ->expects(self::once())
+                ->method('fetchAssociative')
+                ->willReturn(false);
             $service = $this->createServiceWithQueue([
                 new Response(
                     200,
@@ -140,6 +140,11 @@ namespace Services {
                 ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
                 ->willReturn(1);
 
+            $this->connection
+                ->expects(self::once())
+                ->method('fetchAssociative')
+                ->willReturn(false);
+
             $service = $this->createServiceWithQueue([
                 new Response(
                     200,
@@ -166,6 +171,11 @@ namespace Services {
 
         public function testFetchSubscriptionsAllowsOptionalQueryParameters(): void
         {
+            $this->connection
+                ->expects(self::once())
+                ->method('fetchAssociative')
+                ->willReturn(false);
+
             $service = $this->createServiceWithQueue([
                 new Response(
                     200,
@@ -285,9 +295,12 @@ namespace Services {
                 ->willReturn(1);
 
             $this->connection
-                ->expects(self::once())
+                ->expects(self::exactly(2))
                 ->method('fetchAssociative')
-                ->willReturn(['access_token' => 'merchant-token']);
+                ->willReturnOnConsecutiveCalls(
+                    false,
+                    ['access_token' => 'merchant-token']
+                );
 
             $errorBody = json_encode([
                 'code' => 'UNAUTHORIZED_ACCESS',
@@ -317,6 +330,64 @@ namespace Services {
             self::assertSame(['businessId' => 'biz-1'], $firstQuery);
             self::assertSame($firstQuery, $secondQuery);
             self::assertTrue($this->testHandler->hasInfoThatContains('Retrying subscription fetch with merchant token'));
+        }
+
+        public function testFetchSubscriptionsRetriesWithAppTokenWhenMerchantUnauthorized(): void
+        {
+            $subscription = [
+                'subscriptionId' => 'sub-2',
+                'businessId' => 'biz-2',
+                'storeId' => 'store-2',
+                'planId' => 'plan-premium',
+                'status' => 'active',
+                'phase' => 'active',
+                'trialStart' => null,
+                'trialEnd' => null,
+                'startAt' => '2024-05-01T00:00:00Z',
+                'currentPeriodEnd' => null,
+                'cancelAtPeriodEnd' => false,
+                'canceledAt' => null,
+            ];
+
+            $this->connection
+                ->expects(self::once())
+                ->method('executeStatement')
+                ->with(self::stringContains('INSERT INTO subscription'), self::isType('array'))
+                ->willReturn(1);
+
+            $this->connection
+                ->expects(self::once())
+                ->method('fetchAssociative')
+                ->willReturn(['access_token' => 'merchant-token']);
+
+            $errorBody = json_encode([
+                'code' => 'UNAUTHORIZED_ACCESS',
+                'httpStatus' => 401,
+                'message' => 'Access not authorized for the requested resource.',
+                'developerMessage' => 'The access token does not have permission for this resource.',
+                'requestId' => 'test-request-merchant',
+            ], JSON_THROW_ON_ERROR);
+
+            $service = $this->createServiceWithQueue([
+                new Response(401, ['Content-Type' => 'application/json'], $errorBody),
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode(['subscriptions' => [$subscription]], JSON_THROW_ON_ERROR)
+                ),
+            ]);
+
+            $result = $service->fetchSubscriptions('app-token', 'biz-2');
+
+            self::assertSame([$subscription], $result);
+            self::assertCount(2, $this->history);
+            self::assertSame('Bearer merchant-token', $this->history[0]['request']->getHeaderLine('Authorization'));
+            self::assertSame('Bearer app-token', $this->history[1]['request']->getHeaderLine('Authorization'));
+            parse_str($this->history[0]['request']->getUri()->getQuery(), $firstQuery);
+            parse_str($this->history[1]['request']->getUri()->getQuery(), $secondQuery);
+            self::assertSame(['businessId' => 'biz-2'], $firstQuery);
+            self::assertSame($firstQuery, $secondQuery);
+            self::assertTrue($this->testHandler->hasInfoThatContains('Merchant token unauthorized for business biz-2; retrying subscription fetch with app token'));
         }
 
         public function testFetchPlansReturnsDecodedResponseAndDoesNotLogErrors(): void
