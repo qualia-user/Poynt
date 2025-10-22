@@ -201,4 +201,61 @@ class CallbackServiceTest extends TestCase
         $this->assertNotContains('DELETE FROM app_token WHERE business_id = :biz', $capturedStatements);
         $this->assertNotContains('DELETE FROM merchant_token WHERE business_id = :biz', $capturedStatements);
     }
+
+    public function testSelectDefaultPlanIdHandlesNestedItems(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $callbackService = $this->createCallbackService($context);
+
+        $plans = [
+            'items' => [
+                [
+                    'planId' => 'plan-basic',
+                    'status' => 'ACTIVE',
+                ],
+                [
+                    'planId' => 'plan-pro',
+                    'status' => 'inactive',
+                ],
+            ],
+            'links' => [],
+        ];
+
+        $method = new ReflectionMethod($callbackService, 'selectDefaultPlanId');
+        $method->setAccessible(true);
+
+        $this->assertSame('plan-basic', $method->invoke($callbackService, $plans));
+    }
+
+    public function testFindPlanIdByNameMatchesCaseInsensitive(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $callbackService = $this->createCallbackService($context);
+
+        $plans = [
+            'plans' => [
+                [
+                    'planId' => 'plan-basic',
+                    'name' => 'Basic',
+                    'status' => 'active',
+                ],
+                [
+                    'planId' => 'plan-pro',
+                    'name' => 'Pro',
+                    'status' => 'active',
+                ],
+            ],
+        ];
+
+        $method = new ReflectionMethod($callbackService, 'findPlanIdByName');
+        $method->setAccessible(true);
+
+        $this->assertSame('plan-pro', $method->invoke($callbackService, $plans, 'PRO'));
+    }
 }
