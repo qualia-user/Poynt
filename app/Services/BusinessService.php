@@ -59,7 +59,7 @@ class BusinessService {
         try {
             // 4) See if a business row with this business_id already exists
             $existing = $this->context->getConn()->fetchAssociative(
-                'SELECT business_id FROM business WHERE business_id = ?',
+                'SELECT business_id FROM business WHERE business_id = ? AND active = TRUE ORDER BY updated_at DESC LIMIT 1',
                 [$businessId]
             );
 
@@ -221,7 +221,12 @@ class BusinessService {
         }
 
         $sql = <<<SQL
-        SELECT * FROM business WHERE business_id = ?
+        SELECT *
+          FROM business
+         WHERE business_id = ?
+           AND active = TRUE
+         ORDER BY updated_at DESC
+         LIMIT 1
         SQL;
 
         $success = $this->context->getConn()->fetchAssociative($sql, [$businessId]);
