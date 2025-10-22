@@ -432,10 +432,10 @@ class CallbackService
             return true;
         }
 
-        if (!$appAccessToken || !$defaultPlanId) {
+        if (!$appAccessToken || !$merchantAccessToken || !$defaultPlanId) {
             $this->context->getLog()->warning(
                 sprintf(
-                    'Unable to create subscription for business %s store %s: missing app token or plan.',
+                    'Unable to create subscription for business %s store %s: missing app token, merchant token, or plan.',
                     $businessId,
                     $storeId
                 )
@@ -470,7 +470,7 @@ class CallbackService
         }
 
         $created = $subscriptionService->createSubscription(
-            $appAccessToken,
+            $merchantAccessToken,
             $businessId,
             $storeId,
             $defaultPlanId
