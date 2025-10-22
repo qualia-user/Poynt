@@ -6,6 +6,7 @@ use App\Core\Context;
 use App\Core\Response;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\OAuthHandlerInterface;
+use RuntimeException;
 use Throwable;
 
 class CallbackService
@@ -54,12 +55,20 @@ class CallbackService
             ];
         }
 
-        $this->runBusinessWorkflow(
+        $workflowSucceeded = $this->runBusinessWorkflow(
             $handler->getBusinessId(),
             $handler->getStoreId(),
             $tokenResult['appToken'] ?? [],
             $tokenResult['merchantToken'] ?? []
         );
+
+        if (!$workflowSucceeded) {
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Failed to synchronize business during onboarding.',
+            ];
+        }
 
         $handler->registerWebhooks();
 
@@ -126,26 +135,73 @@ class CallbackService
         ?string $storeId,
         mixed $appToken,
         mixed $merchantToken
-    ): void {
+    ): bool {
         if (!$businessId) {
             $this->context->getLog()->warning('Skipping onboarding sync: missing businessId in callback response.');
 
-            return;
+            return false;
         }
 
-        if ($this->installationExists($businessId)) {
-            $this->reactivateInstallation($businessId);
-        } else {
-            $this->startTrialIfMissing($businessId, $storeId);
+        $conn = $this->context->getConn();
+        $transactionStarted = false;
+
+        try {
+            $conn->beginTransaction();
+            $transactionStarted = true;
+
+            if ($this->installationExists($businessId)) {
+                $this->reactivateInstallation($businessId);
+            } else {
+                $this->startTrialIfMissing($businessId, $storeId);
+            }
+
+            $appAccessToken = $this->extractAccessToken($appToken);
+            $merchantAccessToken = $this->extractAccessToken($merchantToken);
+
+            if (!$this->synchronizeStoresAndSubscriptions($businessId, $appAccessToken, $merchantAccessToken)) {
+                throw new RuntimeException(
+                    sprintf('Failed to synchronize stores or subscriptions for business %s.', $businessId)
+                );
+            }
+
+            if (!$this->gatherInitialResources($businessId)) {
+                throw new RuntimeException(
+                    sprintf('Failed to gather onboarding resources for business %s.', $businessId)
+                );
+            }
+
+            $conn->commit();
+
+            return true;
+        } catch (Throwable $e) {
+            if ($transactionStarted && method_exists($conn, 'isTransactionActive') && $conn->isTransactionActive()) {
+                $conn->rollBack();
+            } elseif ($transactionStarted) {
+                // Doctrine < 3.3 does not expose isTransactionActive; attempt rollback regardless.
+                try {
+                    $conn->rollBack();
+                } catch (Throwable $rollbackError) {
+                    $this->context->getLog()->warning(
+                        sprintf(
+                            'CallbackService::runBusinessWorkflow rollback warning for business %s: %s',
+                            $businessId,
+                            $rollbackError->getMessage()
+                        )
+                    );
+                }
+            }
+
+            $this->context->getLog()->error(
+                sprintf('CallbackService::runBusinessWorkflow failed for business %s: %s', $businessId, $e->getMessage()),
+                ['exception' => $e]
+            );
+
+            if ($businessId) {
+                $this->purgeBusinessInstallation($businessId, true);
+            }
+
+            return false;
         }
-
-        $this->synchronizeStoresAndSubscriptions(
-            $businessId,
-            $this->extractAccessToken($appToken),
-            $this->extractAccessToken($merchantToken)
-        );
-
-        $this->gatherInitialResources($businessId);
     }
 
     private function installationExists(string $businessId): bool
@@ -229,17 +285,21 @@ class CallbackService
         string $businessId,
         ?string $appAccessToken,
         ?string $merchantAccessToken
-    ): void {
+    ): bool {
         $storeService = $this->serviceFactory->store($businessId);
         $storesPayload = $storeService->fetchByBusinessId($businessId);
 
+        if ($storesPayload === false) {
+            return false;
+        }
+
         if (!is_array($storesPayload) || $storesPayload === []) {
-            return;
+            return true;
         }
 
         $normalizedStores = $this->normalizeResourceItems($storesPayload);
         if (empty($normalizedStores['items'])) {
-            return;
+            return true;
         }
 
         $subscriptionService = $this->serviceFactory->subscription($businessId);
@@ -247,6 +307,9 @@ class CallbackService
 
         if ($appAccessToken) {
             $plans = $subscriptionService->fetchPlans($appAccessToken);
+            if ($plans === null) {
+                return false;
+            }
             $planId = $this->selectDefaultPlanId($plans);
         }
 
@@ -264,16 +327,22 @@ class CallbackService
                 $storeData['businessId'] = $businessId;
             }
 
-            $storeService->upsert($storeData);
+            if ($storeService->upsert($storeData) === false) {
+                return false;
+            }
 
-            $this->ensureStoreSubscription(
+            if (!$this->ensureStoreSubscription(
                 $businessId,
                 $storeId,
                 $appAccessToken,
                 $merchantAccessToken,
                 $planId
-            );
+            )) {
+                return false;
+            }
         }
+
+        return true;
     }
 
     private function ensureStoreSubscription(
@@ -282,7 +351,7 @@ class CallbackService
         ?string $appAccessToken,
         ?string $merchantAccessToken,
         ?string $defaultPlanId
-    ): void {
+    ): bool {
         $subscriptionService = $this->serviceFactory->subscription($businessId, $storeId);
 
         $existing = [];
@@ -290,11 +359,17 @@ class CallbackService
 
         if ($appAccessToken) {
             $existing = $subscriptionService->fetchSubscriptions($appAccessToken, $businessId, $storeId);
+            if ($existing === null) {
+                return false;
+            }
             $matchingSubscriptions = $this->filterSubscriptionsForStore($existing, $storeId);
         }
 
         if (empty($matchingSubscriptions) && $merchantAccessToken) {
-            $existing = $subscriptionService->fetchMerchantSubscriptions($merchantAccessToken, $businessId, $storeId) ?? [];
+            $existing = $subscriptionService->fetchMerchantSubscriptions($merchantAccessToken, $businessId, $storeId);
+            if ($existing === null) {
+                return false;
+            }
             $matchingSubscriptions = $this->filterSubscriptionsForStore($existing, $storeId);
 
             foreach ($matchingSubscriptions as $subscription) {
@@ -305,7 +380,7 @@ class CallbackService
         }
 
         if (!empty($matchingSubscriptions)) {
-            return;
+            return true;
         }
 
         $localSubscriptionExists = $this->storeHasSubscription($businessId, $storeId);
@@ -319,7 +394,7 @@ class CallbackService
                 )
             );
 
-            return;
+            return false;
         }
 
         if ($localSubscriptionExists) {
@@ -331,7 +406,7 @@ class CallbackService
                 )
             );
 
-            return;
+            return true;
         }
 
         if (!$appAccessToken || !$defaultPlanId) {
@@ -343,15 +418,17 @@ class CallbackService
                 )
             );
 
-            return;
+            return false;
         }
 
-        $subscriptionService->createSubscription(
+        $created = $subscriptionService->createSubscription(
             $appAccessToken,
             $businessId,
             $storeId,
             $defaultPlanId
         );
+
+        return $created !== [];
     }
 
     private function extractAccessToken(mixed $token): ?string
@@ -464,20 +541,26 @@ class CallbackService
         }
     }
 
-    private function gatherInitialResources(string $businessId): void
+    private function gatherInitialResources(string $businessId): bool
     {
+        $allSuccessful = true;
         foreach ($this->serviceFactory->onboardingResources($businessId) as $service) {
-            $this->syncResourceCollection($businessId, $service);
+            $result = $this->syncResourceCollection($businessId, $service);
+            if (!$result) {
+                $allSuccessful = false;
+            }
         }
+
+        return $allSuccessful;
     }
 
     /**
      * @param object $service
      */
-    private function syncResourceCollection(string $businessId, object $service): void
+    private function syncResourceCollection(string $businessId, object $service): bool
     {
         if (!method_exists($service, 'fetchByBusinessId') || !method_exists($service, 'upsert')) {
-            return;
+            return true;
         }
 
         try {
@@ -490,14 +573,19 @@ class CallbackService
                     $e->getMessage()
                 )
             );
-            return;
+            return false;
+        }
+
+        if ($raw === false) {
+            return false;
         }
 
         if (!is_array($raw) || empty($raw)) {
-            return;
+            return true;
         }
 
         $normalized = $this->normalizeResourceItems($raw);
+        $allSuccessful = true;
 
         foreach ($normalized['items'] as $item) {
             if (!is_array($item)) {
@@ -505,7 +593,10 @@ class CallbackService
             }
 
             try {
-                $service->upsert($item);
+                $result = $service->upsert($item);
+                if ($result === false) {
+                    $allSuccessful = false;
+                }
             } catch (Throwable $e) {
                 $this->context->getLog()->error(
                     sprintf(
@@ -514,10 +605,132 @@ class CallbackService
                         $e->getMessage()
                     )
                 );
+                $allSuccessful = false;
             }
         }
 
         $this->recordResourceLinks($service, $businessId, $normalized['links']);
+
+        return $allSuccessful;
+    }
+
+    public function purgeAndReinstall(
+        string $businessId,
+        string $storeId,
+        array $appToken,
+        array $merchantToken
+    ): bool {
+        if (!$this->validateTokenPayload($appToken, 'app') || !$this->validateTokenPayload($merchantToken, 'merchant')) {
+            return false;
+        }
+
+        $this->purgeBusinessInstallation($businessId, false);
+
+        $tokenService = $this->serviceFactory->token();
+
+        try {
+            $tokenService->saveAppToken($businessId, $appToken);
+            $tokenService->saveMerchantToken($businessId, $merchantToken);
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('Failed to persist tokens during reinstall for business %s: %s', $businessId, $e->getMessage()),
+                ['exception' => $e]
+            );
+
+            return false;
+        }
+
+        return $this->runBusinessWorkflow($businessId, $storeId, $appToken, $merchantToken);
+    }
+
+    /**
+     * Remove all local data for a business.
+     *
+     * Tokens are preserved by default so a subsequent reinstall can reuse them.
+     */
+    public function purgeBusiness(string $businessId, bool $preserveTokens = true): void
+    {
+        $this->purgeBusinessInstallation($businessId, $preserveTokens);
+    }
+
+    private function purgeBusinessInstallation(string $businessId, bool $preserveTokens = true): void
+    {
+        $conn = $this->context->getConn();
+        $transactionStarted = false;
+
+        try {
+            $conn->beginTransaction();
+            $transactionStarted = true;
+
+            $conn->executeStatement('DELETE FROM token_refresh_log WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM hook_delivery WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM hook WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM paylink WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM "order" WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM transaction WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM subscription WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM catalog_available_discount WHERE catalog_id IN (SELECT catalog_id FROM catalog WHERE business_id = :biz)', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM catalog_product WHERE catalog_id IN (SELECT catalog_id FROM catalog WHERE business_id = :biz)', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM catalog WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM variant_inventory WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM inventory WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM inventory_summary WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM product_variant WHERE product_id IN (SELECT product_id FROM product WHERE business_id = :biz)', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM product WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM category WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM tax WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM customer WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM business_user WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM terminal WHERE store_id IN (SELECT store_id FROM store WHERE business_id = :biz)', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM store WHERE business_id = :biz', ['biz' => $businessId]);
+
+            if (!$preserveTokens) {
+                $conn->executeStatement('DELETE FROM merchant_token WHERE business_id = :biz', ['biz' => $businessId]);
+                $conn->executeStatement('DELETE FROM app_token WHERE business_id = :biz', ['biz' => $businessId]);
+            }
+
+            $conn->executeStatement('DELETE FROM business WHERE business_id = :biz', ['biz' => $businessId]);
+
+            $conn->commit();
+        } catch (Throwable $e) {
+            if ($transactionStarted && method_exists($conn, 'isTransactionActive') && $conn->isTransactionActive()) {
+                $conn->rollBack();
+            } elseif ($transactionStarted) {
+                try {
+                    $conn->rollBack();
+                } catch (Throwable $rollbackError) {
+                    $this->context->getLog()->warning(
+                        sprintf(
+                            'CallbackService::purgeBusinessInstallation rollback warning for business %s: %s',
+                            $businessId,
+                            $rollbackError->getMessage()
+                        )
+                    );
+                }
+            }
+
+            $this->context->getLog()->error(
+                sprintf('CallbackService::purgeBusinessInstallation failed for business %s: %s', $businessId, $e->getMessage()),
+                ['exception' => $e]
+            );
+        }
+    }
+
+    private function validateTokenPayload(array $token, string $type): bool
+    {
+        $requiredKeys = ['accessToken', 'refreshToken', 'expiresIn'];
+
+        foreach ($requiredKeys as $key) {
+            if (!array_key_exists($key, $token)) {
+                $this->context->getLog()->error(
+                    sprintf('CallbackService::purgeAndReinstall missing %s key in %s token payload.', $key, $type)
+                );
+
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
