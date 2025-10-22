@@ -240,7 +240,7 @@ namespace Services {
             ]);
 
             $result = $service->createSubscription(
-                'token',
+                'merchant-token',
                 $responsePayload['businessId'],
                 $responsePayload['storeId'],
                 $responsePayload['planId'],
@@ -253,7 +253,7 @@ namespace Services {
 
             $request = $this->history[0]['request'];
             self::assertSame('POST', $request->getMethod());
-            self::assertSame('Bearer token', $request->getHeaderLine('Authorization'));
+            self::assertSame('Bearer merchant-token', $request->getHeaderLine('Authorization'));
             self::assertSame(
                 'https://billing.poynt.net/organizations/test-org/apps/urn:aid:test-app/subscriptions',
                 (string) $request->getUri()

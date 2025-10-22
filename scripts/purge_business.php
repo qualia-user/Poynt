@@ -57,6 +57,65 @@ $context = new Context($api, $conn, $log, $httpClientFactory);
 $serviceFactory = new ServiceFactory($context);
 $platformRegistry = new PlatformRegistry($context);
 
+$subscriptionIds = [];
+
+try {
+    $subscriptionIds = $conn->fetchFirstColumn(
+        'SELECT subscription_id FROM subscription WHERE business_id = :biz',
+        ['biz' => $businessId]
+    );
+} catch (\Throwable $e) {
+    $log->warning(
+        sprintf('Failed to fetch subscriptions for business %s: %s', $businessId, $e->getMessage()),
+        ['exception' => $e]
+    );
+}
+
+if (!empty($subscriptionIds)) {
+    $tokenService = $serviceFactory->token();
+    $appToken = null;
+
+    try {
+        $appToken = $tokenService->getAppToken($businessId, true);
+    } catch (\Throwable $e) {
+        $log->warning(
+            sprintf('Failed to retrieve app token for business %s: %s', $businessId, $e->getMessage()),
+            ['exception' => $e]
+        );
+    }
+
+    if (is_array($appToken) && !empty($appToken['access_token'])) {
+        $subscriptionService = $serviceFactory->subscription($businessId);
+
+        foreach ($subscriptionIds as $subscriptionId) {
+            try {
+                $subscriptionService->deleteSubscription($appToken['access_token'], $subscriptionId);
+                $log->info(
+                    sprintf(
+                        'Deleted subscription %s from Poynt billing for business %s.',
+                        $subscriptionId,
+                        $businessId
+                    )
+                );
+            } catch (\Throwable $e) {
+                $log->error(
+                    sprintf(
+                        'Failed to delete subscription %s from Poynt billing for business %s: %s',
+                        $subscriptionId,
+                        $businessId,
+                        $e->getMessage()
+                    ),
+                    ['exception' => $e]
+                );
+            }
+        }
+    } else {
+        $log->warning(
+            sprintf('No app token available for business %s; skipping Poynt subscription deletion.', $businessId)
+        );
+    }
+}
+
 $callbackService = new CallbackService($context, $platformRegistry, $serviceFactory);
 
 $callbackService->purgeBusiness($businessId, !$dropTokens);
