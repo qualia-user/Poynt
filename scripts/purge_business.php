@@ -58,6 +58,7 @@ $serviceFactory = new ServiceFactory($context);
 $platformRegistry = new PlatformRegistry($context);
 
 $subscriptionIds = [];
+$remoteSubscriptionIds = [];
 
 try {
     $subscriptionIds = $conn->fetchFirstColumn(
@@ -71,22 +72,45 @@ try {
     );
 }
 
-if (!empty($subscriptionIds)) {
-    $tokenService = $serviceFactory->token();
-    $appToken = null;
+$tokenService = $serviceFactory->token();
+$appToken = null;
 
+try {
+    $appToken = $tokenService->getAppToken($businessId, true);
+} catch (\Throwable $e) {
+    $log->warning(
+        sprintf('Failed to retrieve app token for business %s: %s', $businessId, $e->getMessage()),
+        ['exception' => $e]
+    );
+}
+
+$subscriptionService = $serviceFactory->subscription($businessId);
+
+if (is_array($appToken) && !empty($appToken['access_token'])) {
     try {
-        $appToken = $tokenService->getAppToken($businessId, true);
+        $remoteSubscriptions = $subscriptionService->fetchSubscriptions($appToken['access_token'], $businessId);
+
+        if (is_array($remoteSubscriptions)) {
+            foreach ($remoteSubscriptions as $subscription) {
+                $remoteId = $subscription['subscriptionId'] ?? null;
+
+                if (is_string($remoteId) && $remoteId !== '') {
+                    $remoteSubscriptionIds[] = $remoteId;
+                }
+            }
+        }
     } catch (\Throwable $e) {
-        $log->warning(
-            sprintf('Failed to retrieve app token for business %s: %s', $businessId, $e->getMessage()),
+        $log->error(
+            sprintf('Failed to fetch remote subscriptions for business %s: %s', $businessId, $e->getMessage()),
             ['exception' => $e]
         );
     }
+}
 
+$subscriptionIds = array_values(array_unique(array_merge($subscriptionIds, $remoteSubscriptionIds)));
+
+if (!empty($subscriptionIds)) {
     if (is_array($appToken) && !empty($appToken['access_token'])) {
-        $subscriptionService = $serviceFactory->subscription($businessId);
-
         foreach ($subscriptionIds as $subscriptionId) {
             try {
                 $subscriptionService->deleteSubscription($appToken['access_token'], $subscriptionId);
