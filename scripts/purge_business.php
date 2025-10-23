@@ -74,12 +74,22 @@ try {
 
 $tokenService = $serviceFactory->token();
 $appToken = null;
+$merchantToken = null;
 
 try {
     $appToken = $tokenService->getAppToken($businessId, true);
 } catch (\Throwable $e) {
     $log->warning(
         sprintf('Failed to retrieve app token for business %s: %s', $businessId, $e->getMessage()),
+        ['exception' => $e]
+    );
+}
+
+try {
+    $merchantToken = $tokenService->getMerchantToken($businessId);
+} catch (\Throwable $e) {
+    $log->warning(
+        sprintf('Failed to retrieve merchant token for business %s: %s', $businessId, $e->getMessage()),
         ['exception' => $e]
     );
 }
@@ -110,10 +120,10 @@ if (is_array($appToken) && !empty($appToken['access_token'])) {
 $subscriptionIds = array_values(array_unique(array_merge($subscriptionIds, $remoteSubscriptionIds)));
 
 if (!empty($subscriptionIds)) {
-    if (is_array($appToken) && !empty($appToken['access_token'])) {
+    if (is_string($merchantToken) && $merchantToken !== '') {
         foreach ($subscriptionIds as $subscriptionId) {
             try {
-                $subscriptionService->deleteSubscription($appToken['access_token'], $subscriptionId);
+                $subscriptionService->deleteSubscription($subscriptionId, $merchantToken);
                 $log->info(
                     sprintf(
                         'Deleted subscription %s from Poynt billing for business %s.',
@@ -135,7 +145,7 @@ if (!empty($subscriptionIds)) {
         }
     } else {
         $log->warning(
-            sprintf('No app token available for business %s; skipping Poynt subscription deletion.', $businessId)
+            sprintf('No merchant token available for business %s; skipping Poynt subscription deletion.', $businessId)
         );
     }
 }
