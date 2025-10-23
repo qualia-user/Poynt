@@ -406,7 +406,7 @@ class SubscriptionService
         }
 
         // Overwrite local row (which likely already exists as a “trial”) with Poynt’s data
-        $this->upsertLocalSubscription($respData);
+        $this->upsertLocalSubscription($respData, $storeId);
 
         return $respData;
     }
@@ -515,7 +515,8 @@ class SubscriptionService
                 continue;
             }
 
-            $this->upsertLocalSubscription($sub);
+            $resolvedStoreId = $sub['storeId'] ?? $storeId ?? $this->storeId;
+            $this->upsertLocalSubscription($sub, $resolvedStoreId);
         }
 
         return $respList;
@@ -745,7 +746,8 @@ class SubscriptionService
     public function upsert(array $subscriptionData): bool
     {
         try {
-            $this->upsertLocalSubscription($subscriptionData);
+            $resolvedStoreId = $subscriptionData['storeId'] ?? $this->storeId;
+            $this->upsertLocalSubscription($subscriptionData, $resolvedStoreId);
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
@@ -816,7 +818,7 @@ class SubscriptionService
      * Poynt’s JSON is expected to include:
      *   - subscriptionId       (string)
      *   - businessId           (string)
-     *   - storeId              (string)
+     *   - storeId              (string, when available in payload)
      *   - planId               (string)
      *   - status               (string)
      *   - phase                (string)
@@ -828,14 +830,15 @@ class SubscriptionService
      *   - canceledAt           (string|null, ISO8601)
      *
      * @param array $poyntSub
+     * @param string|null $storeId Optional store identifier when missing from payload
      * @return void
      * @throws RuntimeException on SQL error
      */
-    public function upsertLocalSubscription(array $poyntSub): void
+    public function upsertLocalSubscription(array $poyntSub, ?string $storeId = null): void
     {
         $subscriptionId   = $poyntSub['subscriptionId'];
         $businessId       = $poyntSub['businessId'];
-        $storeId          = $poyntSub['storeId'];
+        $storeId          = $storeId ?? ($poyntSub['storeId'] ?? $this->storeId);
         $planId           = $poyntSub['planId'];
         $status           = $poyntSub['status'];
         $phase            = $poyntSub['phase'];
@@ -843,7 +846,7 @@ class SubscriptionService
         $trialEnd         = Format::optionalTimestamp($poyntSub['trialEnd']         ?? null);
         $startAt          = Format::optionalTimestamp($poyntSub['startAt']          ?? null);
         $currentPeriodEnd = Format::optionalTimestamp($poyntSub['currentPeriodEnd'] ?? null);
-        $cancelAtEnd      = $poyntSub['cancelAtPeriodEnd'] ?? false;
+        $cancelAtEnd      = Format::optionalBool($poyntSub['cancelAtPeriodEnd'] ?? null) ?? false;
         $canceledAt       = Format::optionalTimestamp($poyntSub['canceledAt']       ?? null);
 
         $sql = <<<SQL
