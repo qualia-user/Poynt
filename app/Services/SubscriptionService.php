@@ -769,21 +769,35 @@ class SubscriptionService
     /**
      * Deletes (cancels) the subscription on Poynt, then deletes the local row.
      *
-     * @param string $appAccessToken
      * @param string $subscriptionId
+     * @param string|null $merchantAccessToken  Explicit merchant token to use; if null we attempt to load stored token
      * @return array  Poynt’s delete response (decoded JSON)
      * @throws RuntimeException|GuzzleException on HTTP or SQL error
      */
     public function deleteSubscription(
-        string $appAccessToken,
-        string $subscriptionId
+        string $subscriptionId,
+        ?string $merchantAccessToken = null
     ): array {
+        if ($merchantAccessToken === null || $merchantAccessToken === '') {
+            if ($this->businessId === null || $this->businessId === '') {
+                throw new RuntimeException('Cannot delete subscription without a business ID or merchant access token.');
+            }
+
+            $merchantAccessToken = $this->getStoredMerchantToken($this->businessId);
+
+            if (!is_string($merchantAccessToken) || $merchantAccessToken === '') {
+                throw new RuntimeException(
+                    sprintf('No merchant access token available for business %s; cannot delete subscription.', $this->businessId)
+                );
+            }
+        }
+
         $endpoint = $this->buildAppResourceUrl('subscriptions/' . $subscriptionId);
 
         try {
             $response = $this->http->delete($endpoint, [
                 'headers' => [
-                    'Authorization' => 'Bearer ' . $appAccessToken,
+                    'Authorization' => 'Bearer ' . $merchantAccessToken,
                     'Accept'        => 'application/json',
                 ],
             ]);
@@ -805,7 +819,7 @@ class SubscriptionService
             $this->context->getLog()->error("Poynt DELETE subscription failed: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
         }
 
-        return $respData;
+        return $respData ?? [];
     }
 
     // ────────────────────────────────────────────────────────────────────────────
