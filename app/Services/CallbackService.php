@@ -406,7 +406,7 @@ class CallbackService
 
             foreach ($matchingSubscriptions as $subscription) {
                 if (is_array($subscription)) {
-                    $subscriptionService->upsertLocalSubscription($subscription);
+                    $subscriptionService->upsertLocalSubscription($subscription, $storeId);
                 }
             }
         }
