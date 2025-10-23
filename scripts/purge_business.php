@@ -57,6 +57,114 @@ $context = new Context($api, $conn, $log, $httpClientFactory);
 $serviceFactory = new ServiceFactory($context);
 $platformRegistry = new PlatformRegistry($context);
 
+$subscriptionService = $serviceFactory->subscription($businessId);
+$tokenService = $serviceFactory->token();
+$appAccessToken = null;
+
+try {
+    $appToken = $tokenService->getAppToken($businessId, true);
+    if (is_array($appToken) && !empty($appToken['access_token'])) {
+        $appAccessToken = $appToken['access_token'];
+    } else {
+        $log->warning(
+            sprintf('App token payload for business %s missing access_token; skipping remote subscription deletion.', $businessId)
+        );
+    }
+} catch (\Throwable $e) {
+    $log->warning(
+        sprintf('Failed to retrieve app token for business %s: %s', $businessId, $e->getMessage()),
+        ['exception' => $e]
+    );
+}
+
+$remoteSubscriptionIds = [];
+
+if ($appAccessToken !== null) {
+    try {
+        $remoteSubscriptions = $subscriptionService->fetchSubscriptions($appAccessToken, $businessId);
+
+        if (is_array($remoteSubscriptions)) {
+            foreach ($remoteSubscriptions as $remoteSubscription) {
+                if (is_array($remoteSubscription) && !empty($remoteSubscription['subscriptionId'])) {
+                    $remoteSubscriptionIds[] = (string) $remoteSubscription['subscriptionId'];
+                }
+            }
+
+            $remoteSubscriptionIds = array_values(array_unique($remoteSubscriptionIds));
+
+            if (empty($remoteSubscriptionIds)) {
+                $log->info(
+                    sprintf('No remote subscriptions returned for business %s.', $businessId)
+                );
+            } else {
+                $log->info(
+                    sprintf(
+                        'Fetched %d remote subscription(s) for business %s.',
+                        count($remoteSubscriptionIds),
+                        $businessId
+                    )
+                );
+            }
+        } else {
+            $log->warning(
+                sprintf('Unexpected response when fetching remote subscriptions for business %s.', $businessId)
+            );
+        }
+    } catch (\Throwable $e) {
+        $log->error(
+            sprintf('Failed to fetch remote subscriptions for business %s: %s', $businessId, $e->getMessage()),
+            ['exception' => $e]
+        );
+    }
+}
+
+$localSubscriptionIds = [];
+
+try {
+    $localSubscriptionIds = $conn->fetchFirstColumn(
+        'SELECT subscription_id FROM subscription WHERE business_id = :biz',
+        ['biz' => $businessId]
+    );
+} catch (\Throwable $e) {
+    $log->warning(
+        sprintf('Failed to fetch local subscriptions for business %s: %s', $businessId, $e->getMessage()),
+        ['exception' => $e]
+    );
+}
+
+$subscriptionIds = array_values(array_unique(array_merge($remoteSubscriptionIds, $localSubscriptionIds)));
+
+if (!empty($subscriptionIds)) {
+    if ($appAccessToken === null) {
+        $log->warning(
+            sprintf('No app token available for business %s; skipping Poynt subscription deletion.', $businessId)
+        );
+    } else {
+        foreach ($subscriptionIds as $subscriptionId) {
+            try {
+                $subscriptionService->deleteSubscription($appAccessToken, $subscriptionId);
+                $log->info(
+                    sprintf(
+                        'Deleted subscription %s from Poynt billing for business %s.',
+                        $subscriptionId,
+                        $businessId
+                    )
+                );
+            } catch (\Throwable $e) {
+                $log->error(
+                    sprintf(
+                        'Failed to delete subscription %s from Poynt billing for business %s: %s',
+                        $subscriptionId,
+                        $businessId,
+                        $e->getMessage()
+                    ),
+                    ['exception' => $e]
+                );
+            }
+        }
+    }
+}
+
 $callbackService = new CallbackService($context, $platformRegistry, $serviceFactory);
 
 $callbackService->purgeBusiness($businessId, !$dropTokens);
