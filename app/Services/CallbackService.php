@@ -586,11 +586,17 @@ class CallbackService
 
     private function selectDefaultPlanId(?array $plans): ?string
     {
-        $candidates = $this->collectPlanCandidates($plans);
+        $allCandidates = $this->collectPlanCandidates($plans);
 
-        if ($candidates === []) {
+        if ($allCandidates === []) {
             return null;
         }
+
+        $storeScoped = array_filter($allCandidates, function (array $plan): bool {
+            return $this->isStoreScopedPlan($plan);
+        });
+
+        $candidates = $storeScoped !== [] ? array_values($storeScoped) : $allCandidates;
 
         foreach ($candidates as $plan) {
             $planId = $this->extractPlanId($plan);
@@ -612,6 +618,28 @@ class CallbackService
         }
 
         return null;
+    }
+
+    private function isStoreScopedPlan(array $plan): bool
+    {
+        $rawScope = null;
+
+        foreach (['scope', 'scopeType', 'scope_type'] as $key) {
+            $value = $plan[$key] ?? null;
+
+            if ($value === null) {
+                continue;
+            }
+
+            if (is_string($value) || is_numeric($value)) {
+                $rawScope = strtolower(trim((string) $value));
+                if ($rawScope !== '') {
+                    break;
+                }
+            }
+        }
+
+        return $rawScope === 'store';
     }
 
     private function startTrialIfMissing(?string $businessId, ?string $storeId): void
