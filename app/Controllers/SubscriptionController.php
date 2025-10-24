@@ -42,8 +42,12 @@ class SubscriptionController extends Controller
         $subscriptionId = $subscription['subscriptionId'] ?? $subscription['subscription_id'] ?? null;
         $trialExpired   = $subscriptionId ? $this->subscriptionService->hasTrialExpired($subscriptionId) : false;
 
+        $normalizedStatus = is_array($subscription)
+            ? $this->subscriptionService->resolveSubscriptionStatus($subscription)
+            : null;
+
         $response = [
-            'subscriptionStatus' => $subscription['status'] ?? null,
+            'subscriptionStatus' => $normalizedStatus,
             'trialExpired'       => $trialExpired,
         ];
 

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS subscription (
     trial_end_at TIMESTAMPTZ,
     start_at TIMESTAMPTZ NOT NULL,
     current_period_end TIMESTAMPTZ,
+    end_at TIMESTAMPTZ,
     cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
     canceled_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
