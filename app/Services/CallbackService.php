@@ -389,14 +389,6 @@ class CallbackService
         $existing = [];
         $matchingSubscriptions = [];
 
-        if ($appAccessToken) {
-            $existing = $subscriptionService->fetchSubscriptions($appAccessToken, $businessId, $storeId);
-            if ($existing === null) {
-                return false;
-            }
-            $matchingSubscriptions = $this->filterSubscriptionsForStore($existing, $storeId);
-        }
-
         if (empty($matchingSubscriptions) && $merchantAccessToken) {
             $existing = $subscriptionService->fetchMerchantSubscriptions($merchantAccessToken, $businessId, $storeId);
             if ($existing === null) {
