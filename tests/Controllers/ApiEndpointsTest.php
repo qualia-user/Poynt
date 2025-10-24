@@ -200,6 +200,51 @@ namespace Controllers {
             ], $last['response']);
         }
 
+        public function testSubscriptionStatusTreatsPastEndDateAsEnded(): void
+        {
+            $api = $this->createApi([
+                'merchantAccessToken' => 'token',
+                'businessId' => 'biz',
+                'storeId' => 'store',
+            ], 'GET');
+            $context = $this->createContext($api);
+
+            /** @var SubscriptionService&MockObject $service */
+            $service = $this->getMockBuilder(SubscriptionService::class)
+                ->disableOriginalConstructor()
+                ->onlyMethods(['fetchMerchantSubscription', 'hasTrialExpired'])
+                ->getMock();
+
+            $service->expects(self::once())
+                ->method('fetchMerchantSubscription')
+                ->with('token', 'biz', 'store')
+                ->willReturn([
+                    [
+                        'subscriptionId' => 'sub-123',
+                        'status' => 'ACTIVE',
+                        'endAt' => '2020-01-01T00:00:00Z',
+                    ],
+                ]);
+
+            $service->expects(self::once())
+                ->method('hasTrialExpired')
+                ->with('sub-123')
+                ->willReturn(false);
+
+            $controller = new SubscriptionController($context);
+            $controller->setSubscriptionService($service);
+
+            $controller->status();
+            $last = Api::getLastResponse();
+
+            self::assertNotNull($last);
+            self::assertSame(Response::STATUS_OK, $last['status']);
+            self::assertSame([
+                'subscriptionStatus' => 'ENDED',
+                'trialExpired' => false,
+            ], $last['response']);
+        }
+
         public function testSubscriptionStatusReturnsBadRequestWhenMissingParameters(): void
         {
             $api = $this->createApi([], 'GET');

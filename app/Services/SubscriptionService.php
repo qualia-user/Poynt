@@ -223,6 +223,42 @@ class SubscriptionService
         }
     }
 
+    /**
+     * Normalises a subscription status string, taking into account the remote status
+     * payload and any "endAt" timestamp returned by Poynt. When a subscription has an
+     * end date in the past we treat it as ENDED even if the upstream status still
+     * reports ACTIVE so callers can rely on a consistent life-cycle signal.
+     *
+     * @param array $subscription Raw subscription payload from Poynt or the local DB.
+     */
+    public function resolveSubscriptionStatus(array $subscription): ?string
+    {
+        $status = $subscription['status'] ?? null;
+        if ($status === null) {
+            return null;
+        }
+
+        $normalized = strtoupper((string) $status);
+
+        $endAtRaw = $subscription['endAt'] ?? $subscription['end_at'] ?? null;
+        if ($endAtRaw === null || $endAtRaw === '') {
+            return $normalized;
+        }
+
+        try {
+            $endAt = new DateTime((string) $endAtRaw, new DateTimeZone('UTC'));
+            $now   = new DateTime('now', new DateTimeZone('UTC'));
+
+            if ($endAt <= $now && $normalized === 'ACTIVE') {
+                return 'ENDED';
+            }
+        } catch (Exception) {
+            // Ignore parsing failures and fall back to the original status.
+        }
+
+        return $normalized;
+    }
+
 
     // ────────────────────────────────────────────────────────────────────────────
     // 1) Start a local-only free trial
@@ -263,6 +299,7 @@ class SubscriptionService
           trial_end_at,
           start_at,
           current_period_end,
+          end_at,
           cancel_at_period_end,
           canceled_at,
           created_at,
@@ -272,6 +309,7 @@ class SubscriptionService
           :status, :phase,
           :tstart, :tend,
           :saat, :cpe,
+          NULL,
           FALSE, NULL,
           NOW(), NOW()
         )
@@ -519,8 +557,8 @@ class SubscriptionService
         // Remove from local subscription table
         try {
             $this->context->getConn()->executeStatement(
-                "UPDATE subscription SET status = :status, updated_at = :upat WHERE subscription_id = :sub_id",
-                ['sub_id' => $subscriptionId, 'status' => 'canceled', 'upat' => date('Y-m-d H:i:s')]
+                "UPDATE subscription SET status = :status, end_at = COALESCE(end_at, NOW()), updated_at = :upat WHERE subscription_id = :sub_id",
+                ['sub_id' => $subscriptionId, 'status' => 'CANCELED', 'upat' => date('Y-m-d H:i:s')]
             );
         } catch (\Exception $e) {
             $this->context->getLog()->error("Poynt DELETE subscription failed: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
@@ -566,6 +604,7 @@ class SubscriptionService
         $trialEnd         = Format::optionalTimestamp($poyntSub['trialEnd']         ?? null);
         $startAt          = Format::optionalTimestamp($poyntSub['startAt']          ?? null);
         $currentPeriodEnd = Format::optionalTimestamp($poyntSub['currentPeriodEnd'] ?? null);
+        $endAt            = Format::optionalTimestamp($poyntSub['endAt']            ?? null);
         $cancelAtEnd      = $poyntSub['cancelAtPeriodEnd'] ?? false;
         $canceledAt       = Format::optionalTimestamp($poyntSub['canceledAt']       ?? null);
 
@@ -581,6 +620,7 @@ class SubscriptionService
           trial_end_at,
           start_at,
           current_period_end,
+          end_at,
           cancel_at_period_end,
           canceled_at,
           created_at,
@@ -590,6 +630,7 @@ class SubscriptionService
           :status, :phase,
           :tstart, :tend,
           :saat, :cpe,
+          :endAt,
           :cancelAtEnd, :canceledAt,
           NOW(), NOW()
         )
@@ -603,6 +644,7 @@ class SubscriptionService
           trial_end_at         = EXCLUDED.trial_end_at,
           start_at             = EXCLUDED.start_at,
           current_period_end   = EXCLUDED.current_period_end,
+          end_at               = EXCLUDED.end_at,
           cancel_at_period_end = EXCLUDED.cancel_at_period_end,
           canceled_at          = EXCLUDED.canceled_at,
           updated_at           = NOW()
@@ -620,6 +662,7 @@ class SubscriptionService
                 'tend'        => $trialEnd,
                 'saat'        => $startAt,
                 'cpe'         => $currentPeriodEnd,
+                'endAt'       => $endAt,
                 'cancelAtEnd' => $cancelAtEnd,
                 'canceledAt'  => $canceledAt,
             ]);
@@ -642,6 +685,7 @@ class SubscriptionService
         UPDATE subscription
            SET status = :status,
                start_at = COALESCE(start_at, NOW()),
+               end_at = NULL,
                updated_at = NOW()
          WHERE subscription_id = :sub_id
            AND business_id = :biz
@@ -650,7 +694,7 @@ class SubscriptionService
 
         try {
             $this->context->getConn()->executeStatement($sql, [
-                'status' => 'active',
+                'status' => 'ACTIVE',
                 'sub_id' => $subscriptionId,
                 'biz'    => $businessId,
                 'store'  => $storeId,
@@ -674,6 +718,7 @@ class SubscriptionService
         UPDATE subscription
            SET status = :status,
                canceled_at = COALESCE(canceled_at, NOW()),
+               end_at = COALESCE(end_at, NOW()),
                updated_at = NOW()
          WHERE subscription_id = :sub_id
            AND business_id = :biz
@@ -682,7 +727,7 @@ class SubscriptionService
 
         try {
             $this->context->getConn()->executeStatement($sql, [
-                'status' => 'canceled',
+                'status' => 'CANCELED',
                 'sub_id' => $subscriptionId,
                 'biz'    => $businessId,
                 'store'  => $storeId,
