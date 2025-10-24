@@ -13,12 +13,14 @@ use DateTime;
 use DateTimeZone;
 use Exception;
 use InvalidArgumentException;
+use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use JsonException;
 use Ramsey\Uuid\Uuid;
 use RuntimeException;
+use Throwable;
 use function array_is_list;
 use function str_starts_with;
 
@@ -916,9 +918,68 @@ class SubscriptionService
                 'cpe'         => $currentPeriodEnd,
                 'cancelAtEnd' => $cancelAtEnd,
                 'canceledAt'  => $canceledAt,
+            ], [
+                'cancelAtEnd' => ParameterType::BOOLEAN,
             ]);
-        } catch (\Exception $e) {
-            $this->context->getLog()->error("Failed to upsert local subscription {$subscriptionId}: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+        } catch (Throwable $e) {
+            $conn = $this->context->getConn();
+            $rolledBack = false;
+
+            if ($conn !== null) {
+                try {
+                    if (method_exists($conn, 'isTransactionActive')) {
+                        if ($conn->isTransactionActive()) {
+                            $conn->rollBack();
+                            $rolledBack = true;
+                        }
+                    } else {
+                        $conn->rollBack();
+                        $rolledBack = true;
+                    }
+                } catch (Throwable $rollbackError) {
+                    error_log(
+                        sprintf(
+                            'SubscriptionService::upsertLocalSubscription rollback warning for subscription %s: %s',
+                            $subscriptionId,
+                            $rollbackError->getMessage()
+                        )
+                    );
+                }
+            }
+
+            $canLogWithMonolog = $rolledBack || $conn === null;
+
+            if (!$canLogWithMonolog && method_exists($conn, 'isTransactionActive')) {
+                try {
+                    $canLogWithMonolog = !$conn->isTransactionActive();
+                } catch (Throwable $statusError) {
+                    error_log(
+                        sprintf(
+                            'SubscriptionService::upsertLocalSubscription transaction status warning for subscription %s: %s',
+                            $subscriptionId,
+                            $statusError->getMessage()
+                        )
+                    );
+                }
+            }
+
+            $logMessage = sprintf(
+                'Failed to upsert local subscription %s: %s',
+                $subscriptionId,
+                $e->getMessage()
+            );
+
+            if ($canLogWithMonolog) {
+                $this->context->getLog()->error($logMessage, ['exception' => $e]);
+            } else {
+                error_log($logMessage);
+            }
+
+            throw new RuntimeException(
+                sprintf('Failed to upsert local subscription %s.', $subscriptionId),
+                (int) ($e->getCode() ?? 0),
+                $e
+            );
         }
     }
 
