@@ -215,10 +215,12 @@ class CallbackServiceTest extends TestCase
                 [
                     'planId' => 'plan-basic',
                     'status' => 'ACTIVE',
+                    'scope' => 'STORE',
                 ],
                 [
                     'planId' => 'plan-pro',
                     'status' => 'inactive',
+                    'scope' => 'BUSINESS',
                 ],
             ],
             'links' => [],
@@ -228,6 +230,64 @@ class CallbackServiceTest extends TestCase
         $method->setAccessible(true);
 
         $this->assertSame('plan-basic', $method->invoke($callbackService, $plans));
+    }
+
+    public function testSelectDefaultPlanIdPrefersStoreScopedPlans(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $callbackService = $this->createCallbackService($context);
+
+        $plans = [
+            'items' => [
+                [
+                    'planId' => 'plan-business',
+                    'status' => 'ACTIVE',
+                    'scope' => 'BUSINESS',
+                ],
+                [
+                    'planId' => 'plan-store',
+                    'status' => 'ACTIVE',
+                    'scopeType' => 'STORE',
+                ],
+            ],
+        ];
+
+        $method = new ReflectionMethod($callbackService, 'selectDefaultPlanId');
+        $method->setAccessible(true);
+
+        $this->assertSame('plan-store', $method->invoke($callbackService, $plans));
+    }
+
+    public function testSelectDefaultPlanIdFallsBackWhenNoStoreScopedPlans(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $callbackService = $this->createCallbackService($context);
+
+        $plans = [
+            'items' => [
+                [
+                    'planId' => 'plan-business-active',
+                    'status' => 'ACTIVE',
+                    'scope' => 'BUSINESS',
+                ],
+                [
+                    'planId' => 'plan-business-disabled',
+                    'status' => 'disabled',
+                    'scope' => 'BUSINESS',
+                ],
+            ],
+        ];
+
+        $method = new ReflectionMethod($callbackService, 'selectDefaultPlanId');
+        $method->setAccessible(true);
+
+        $this->assertSame('plan-business-active', $method->invoke($callbackService, $plans));
     }
 
     public function testFindPlanIdByNameMatchesCaseInsensitive(): void
