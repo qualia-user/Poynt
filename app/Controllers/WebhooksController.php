@@ -109,9 +109,22 @@ class WebhooksController extends Controller
         $subscriptionId = $payload['subscriptionId'] ?? null;
         $businessId     = $payload['businessId']     ?? null;
         $storeId        = $payload['storeId']        ?? null;
+        $scope          = isset($payload['scope']) && is_string($payload['scope'])
+            ? strtoupper($payload['scope'])
+            : null;
 
-        if (!$subscriptionId || !$businessId || !$storeId) {
+        if (!$subscriptionId || !$businessId) {
             throw new \InvalidArgumentException('Missing subscription data');
+        }
+
+        if ($scope === 'BUSINESS') {
+            $this->subscriptionService->activateSubscription($subscriptionId, $businessId, null);
+
+            return;
+        }
+
+        if (!$storeId) {
+            throw new \InvalidArgumentException('Missing store identifier for subscription start event');
         }
 
         $this->subscriptionService->activateSubscription($subscriptionId, $businessId, $storeId);
@@ -127,9 +140,22 @@ class WebhooksController extends Controller
         $subscriptionId = $payload['subscriptionId'] ?? null;
         $businessId     = $payload['businessId']     ?? null;
         $storeId        = $payload['storeId']        ?? null;
+        $scope          = isset($payload['scope']) && is_string($payload['scope'])
+            ? strtoupper($payload['scope'])
+            : null;
 
-        if (!$subscriptionId || !$businessId || !$storeId) {
+        if (!$subscriptionId || !$businessId) {
             throw new \InvalidArgumentException('Missing subscription data');
+        }
+
+        if ($scope === 'BUSINESS') {
+            $this->subscriptionService->cancelSubscription($subscriptionId, $businessId, null);
+
+            return;
+        }
+
+        if (!$storeId) {
+            throw new \InvalidArgumentException('Missing store identifier for subscription end event');
         }
 
         $this->subscriptionService->cancelSubscription($subscriptionId, $businessId, $storeId);

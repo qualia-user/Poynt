@@ -517,7 +517,7 @@ class SubscriptionService
                 continue;
             }
 
-            $resolvedStoreId = $sub['storeId'] ?? $storeId ?? $this->storeId;
+            $resolvedStoreId = $this->resolveStoreIdFromPayload($sub, $storeId);
             $this->upsertLocalSubscription($sub, $resolvedStoreId);
         }
 
@@ -682,6 +682,43 @@ class SubscriptionService
         return [];
     }
 
+    /**
+     * Resolve the most appropriate store identifier for a subscription payload.
+     *
+     * When the subscription scope is BUSINESS the store identifier is omitted
+     * entirely and we persist the row without a store reference.
+     *
+     * @param array $payload          Subscription payload from Poynt.
+     * @param string|null $fallbackId Optional store identifier supplied by the caller.
+     * @return string|null
+     */
+    private function resolveStoreIdFromPayload(array $payload, ?string $fallbackId = null): ?string
+    {
+        $scope = $payload['scope'] ?? null;
+        if (is_string($scope) && strtoupper($scope) === 'BUSINESS') {
+            return null;
+        }
+
+        $candidates = [
+            $payload['storeId'] ?? null,
+            $fallbackId,
+            $this->storeId,
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (!is_string($candidate)) {
+                continue;
+            }
+
+            $trimmed = trim($candidate);
+            if ($trimmed !== '') {
+                return $trimmed;
+            }
+        }
+
+        return null;
+    }
+
     private function logSubscriptionRequestException(RequestException $exception, string $prefix): void
     {
         $msg = $exception->hasResponse()
@@ -748,7 +785,7 @@ class SubscriptionService
     public function upsert(array $subscriptionData): bool
     {
         try {
-            $resolvedStoreId = $subscriptionData['storeId'] ?? $this->storeId;
+            $resolvedStoreId = $this->resolveStoreIdFromPayload($subscriptionData, $this->storeId);
             $this->upsertLocalSubscription($subscriptionData, $resolvedStoreId);
             return true;
         } catch (\Throwable $e) {
@@ -854,7 +891,7 @@ class SubscriptionService
     {
         $subscriptionId   = $poyntSub['subscriptionId'];
         $businessId       = $poyntSub['businessId'];
-        $storeId          = $storeId ?? ($poyntSub['storeId'] ?? $this->storeId);
+        $storeId          = $this->resolveStoreIdFromPayload($poyntSub, $storeId);
         $planId           = $poyntSub['planId'];
         $status           = $poyntSub['status'];
         $phase            = $poyntSub['phase'];
@@ -988,10 +1025,10 @@ class SubscriptionService
      *
      * @param string $subscriptionId
      * @param string $businessId
-     * @param string $storeId
+     * @param string|null $storeId
      * @return void
      */
-    public function activateSubscription(string $subscriptionId, string $businessId, string $storeId): void
+    public function activateSubscription(string $subscriptionId, string $businessId, ?string $storeId): void
     {
         $sql = <<<SQL
         UPDATE subscription
@@ -1000,7 +1037,10 @@ class SubscriptionService
                updated_at = NOW()
          WHERE subscription_id = :sub_id
            AND business_id = :biz
-           AND store_id = :store
+           AND (
+                (store_id = :store)
+                OR (:store IS NULL AND store_id IS NULL)
+            )
         SQL;
 
         try {
@@ -1020,10 +1060,10 @@ class SubscriptionService
      *
      * @param string $subscriptionId
      * @param string $businessId
-     * @param string $storeId
+     * @param string|null $storeId
      * @return void
      */
-    public function cancelSubscription(string $subscriptionId, string $businessId, string $storeId): void
+    public function cancelSubscription(string $subscriptionId, string $businessId, ?string $storeId): void
     {
         $sql = <<<SQL
         UPDATE subscription
@@ -1032,7 +1072,10 @@ class SubscriptionService
                updated_at = NOW()
          WHERE subscription_id = :sub_id
            AND business_id = :biz
-           AND store_id = :store
+           AND (
+                (store_id = :store)
+                OR (:store IS NULL AND store_id IS NULL)
+            )
         SQL;
 
         try {

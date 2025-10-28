@@ -286,11 +286,13 @@ class CallbackService
             $subscriptionId = $subscription['subscription_id'] ?? null;
             $storeId = $subscription['store_id'] ?? null;
 
-            if (!$subscriptionId || !$storeId) {
+            if (!$subscriptionId) {
                 continue;
             }
 
-            $subscriptionService->activateSubscription($subscriptionId, $businessId, $storeId);
+            $normalizedStoreId = is_string($storeId) && $storeId !== '' ? $storeId : null;
+
+            $subscriptionService->activateSubscription($subscriptionId, $businessId, $normalizedStoreId);
         }
     }
 
