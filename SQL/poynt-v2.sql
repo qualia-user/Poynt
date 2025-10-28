@@ -74,7 +74,7 @@ CREATE INDEX idx_merchant_token_expires_at ON merchant_token(expires_at);
 CREATE TABLE subscription (
   subscription_id     VARCHAR(255)     PRIMARY KEY,
   business_id         VARCHAR(255)     NOT NULL,
-  store_id            VARCHAR(255)     NOT NULL,
+  store_id            VARCHAR(255),
   plan_id             VARCHAR(255)     NOT NULL,
   status              VARCHAR(50)      NOT NULL,
   phase               VARCHAR(50)      NOT NULL,

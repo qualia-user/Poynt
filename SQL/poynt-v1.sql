@@ -145,7 +145,7 @@ DROP TABLE IF EXISTS business CASCADE;
 
 -- 1) BUSINESS table (root of the hierarchy)
 CREATE TABLE business (
-  business_id VARCHAR(255) PRIMARY KEY,   -- Poyntís business ID
+  business_id VARCHAR(255) PRIMARY KEY,   -- Poynt‚Äôs business ID
   name        VARCHAR(255) NOT NULL,
   metadata    JSONB        NOT NULL DEFAULT '{}',
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -158,8 +158,8 @@ select * from business;
 
 -- 2) STORE table (child of business, no foreign-key enforced)
 CREATE TABLE store (
-  store_id    VARCHAR(255) PRIMARY KEY,   -- Poyntís store ID
-  business_id VARCHAR(255) NOT NULL,      -- ìbelongs toî a business, but not an FK
+  store_id    VARCHAR(255) PRIMARY KEY,   -- Poynt‚Äôs store ID
+  business_id VARCHAR(255) NOT NULL,      -- ‚Äúbelongs to‚Äù a business, but not an FK
   name        VARCHAR(255) NOT NULL,
   metadata    JSONB        NOT NULL DEFAULT '{}',
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -168,8 +168,8 @@ CREATE TABLE store (
 
 -- 3) (Optional) TERMINAL table (child of store, no FK enforced)
 CREATE TABLE terminal (
-  terminal_id VARCHAR(255) PRIMARY KEY,   -- Poyntís terminal ID
-  store_id    VARCHAR(255) NOT NULL,      -- ìbelongs toî a store, but not an FK
+  terminal_id VARCHAR(255) PRIMARY KEY,   -- Poynt‚Äôs terminal ID
+  store_id    VARCHAR(255) NOT NULL,      -- ‚Äúbelongs to‚Äù a store, but not an FK
   metadata    JSONB        NOT NULL DEFAULT '{}',
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
@@ -201,7 +201,7 @@ CREATE INDEX idx_merchant_token_expires_at
 
 -- 6) SUBSCRIPTION table
 CREATE TABLE subscription (
-  subscription_id     VARCHAR(255)     PRIMARY KEY,    -- Poyntís subscription UUID or my own generated UUID
+  store_id            VARCHAR(255),                  -- null when subscription scope is BUSINESS
   business_id         VARCHAR(255)     NOT NULL,       -- which business this store belongs to
   store_id            VARCHAR(255)     NOT NULL,       -- which specific store this subscription is for
   plan_id             VARCHAR(255)     NOT NULL,       -- e.g. "free_trial", "basic_monthly", "pro_annual", etc.
@@ -221,7 +221,7 @@ CREATE TABLE subscription (
 CREATE INDEX idx_subscription_current_period_end
   ON subscription(current_period_end);
 
--- And if you want to find all ìactiveî subscriptions by store_id:
+-- And if you want to find all ‚Äúactive‚Äù subscriptions by store_id:
 CREATE INDEX idx_subscription_store_status
   ON subscription(store_id, status);
 
