@@ -78,11 +78,10 @@ class TransactionService
      */
     public function upsert(array $transactionData, ?array $receiptData = null): bool
     {
-        // Require transaction id and business id
-        if (!isset($transactionData['id'], $transactionData['businessId'])) {
-            $this->context->getLog()->error(
-                'TransactionService::upsert: missing required fields id or businessId'
-            );
+        $transactionId = Format::stringOrNull($transactionData['id'] ?? null);
+        if ($transactionId === null) {
+            $this->context->getLog()->error('TransactionService::upsert: missing required field id');
+
             return false;
         }
 
@@ -90,48 +89,55 @@ class TransactionService
             $receiptData = $transactionData['receipt'];
         }
 
-        $transactionId = $transactionData['id'];
-        $businessId = $transactionData['businessId'];
+        $context = $transactionData['context'] ?? [];
+        if (!is_array($context)) {
+            $context = [];
+        }
+
+        $businessId = Format::stringOrNull($transactionData['businessId'] ?? ($context['businessId'] ?? null));
+        if ($businessId === null) {
+            $this->context->getLog()->error(
+                'TransactionService::upsert: missing business id in payload context'
+            );
+
+            return false;
+        }
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
-        $storeId = $transactionData['storeId']
-            ?? $transactionData['context']['storeId']
-            ?? null;
-        $storeId = Format::stringOrNull($storeId);
-        $references = $transactionData['references'] ?? [];
-        $orderId = $transactionData['orderId'] ?? null;
-        if (!$orderId && is_array($references)) {
-            foreach ($references as $reference) {
-                $type = strtoupper((string) ($reference['type'] ?? $reference['referenceType'] ?? ''));
-                if ($type === 'POYNT_ORDER' || $type === 'ORDER') {
-                    $orderId = $reference['id']
-                        ?? $reference['referenceId']
-                        ?? $reference['value']
-                        ?? null;
-                    if ($orderId) {
-                        break;
-                    }
-                }
-            }
-        }
-        $orderId = Format::stringOrNull($orderId);
+        $storeId = Format::stringOrNull($transactionData['storeId'] ?? ($context['storeId'] ?? null));
+        $storeDeviceId = Format::stringOrNull($transactionData['storeDeviceId'] ?? ($context['storeDeviceId'] ?? null));
+        $employeeUserId = Format::optionalInt($transactionData['employeeUserId'] ?? ($context['employeeUserId'] ?? null));
 
-        $action = $transactionData['action'] ?? $transactionData['type'] ?? null;
-        $status = $transactionData['status'] ?? null;
-        $settlementStatus = $transactionData['settlementStatus']
-            ?? ($transactionData['processorResponse']['settlementStatus'] ?? null);
-        $action = Format::stringOrNull($action);
-        $status = Format::stringOrNull($status);
-        $settlementStatus = Format::stringOrNull($settlementStatus);
-        $settled = Format::optionalBool($transactionData['settled'] ?? null);
+        $signatureRequired = Format::optionalBool($transactionData['signatureRequired'] ?? null);
+        $signatureCaptured = Format::optionalBool($transactionData['signatureCaptured'] ?? null);
+        $pinCaptured = Format::optionalBool($transactionData['pinCaptured'] ?? null);
+        $adjusted = Format::optionalBool($transactionData['adjusted'] ?? null);
+        $amountsAdjusted = Format::optionalBool($transactionData['amountsAdjusted'] ?? null);
+        $authOnly = Format::optionalBool($transactionData['authOnly'] ?? null);
         $partiallyApproved = Format::optionalBool($transactionData['partiallyApproved'] ?? null);
+        $actionVoid = Format::optionalBool($transactionData['actionVoid'] ?? null);
+        $voided = Format::optionalBool($transactionData['voided'] ?? null);
+        $settled = Format::optionalBool($transactionData['settled'] ?? null);
+        $reversalVoid = Format::optionalBool($transactionData['reversalVoid'] ?? null);
 
-        $amounts = $transactionData['amounts'] ?? [];
+        $action = Format::stringOrNull($transactionData['action'] ?? ($transactionData['type'] ?? null));
+        $status = Format::stringOrNull($transactionData['status'] ?? null);
+        $settlementStatus = Format::stringOrNull($transactionData['settlementStatus'] ?? null);
+        $transactionInstruction = Format::stringOrNull($context['transactionInstruction'] ?? null);
+        $source = Format::stringOrNull($context['source'] ?? null);
+        $sourceApp = Format::stringOrNull($context['sourceApp'] ?? null);
+        $mcc = Format::stringOrNull($context['mcc'] ?? null);
+
+        $customerUserId = Format::optionalInt($transactionData['customerUserId'] ?? null);
+        $customerLanguage = Format::stringOrNull($transactionData['customerLanguage'] ?? null);
+
+        $amounts = is_array($transactionData['amounts'] ?? null) ? $transactionData['amounts'] : [];
         $transactionAmount = Format::amount($amounts['transactionAmount'] ?? null);
         $orderAmount = Format::amount($amounts['orderAmount'] ?? null);
         $tipAmount = Format::amount($amounts['tipAmount'] ?? null);
         $cashbackAmount = Format::amount($amounts['cashbackAmount'] ?? null);
+        $customerOptedNoTip = Format::optionalBool($amounts['customerOptedNoTip'] ?? null);
         $currency = $amounts['currency'] ?? null;
         if ($currency === null && isset($amounts['transactionAmount']) && is_array($amounts['transactionAmount'])) {
             $currency = $amounts['transactionAmount']['currency'] ?? null;
@@ -139,7 +145,7 @@ class TransactionService
         $currency = $currency ?? ($transactionData['currency'] ?? null);
         $currency = Format::stringOrNull($currency);
 
-        $fundingSource = $transactionData['fundingSource'] ?? [];
+        $fundingSource = is_array($transactionData['fundingSource'] ?? null) ? $transactionData['fundingSource'] : [];
         $card = $fundingSource['card'] ?? [];
         $cardBrand = $card['brand'] ?? $card['cardBrand'] ?? null;
         if (is_array($cardBrand)) {
@@ -147,41 +153,49 @@ class TransactionService
         }
         $cardBrand = $cardBrand ?? ($card['type'] ?? null);
         $cardBrand = Format::stringOrNull($cardBrand);
-        $cardLast4 = $card['numberLast4'] ?? ($card['lastFourDigits'] ?? null);
-        $cardLast4 = Format::stringOrNull($cardLast4);
-        $entryMode = $card['entryMode']
+        $cardLast4 = Format::stringOrNull($card['numberLast4'] ?? ($card['lastFourDigits'] ?? null));
+        $entryMode = Format::stringOrNull(
+            $card['entryMode']
             ?? $card['entryMethod']
-            ?? ($transactionData['entryMode'] ?? $fundingSource['entryDetails']['entryMode'] ?? null);
-        $entryMode = Format::stringOrNull($entryMode);
+            ?? ($transactionData['entryMode'] ?? ($fundingSource['entryDetails']['entryMode'] ?? null))
+        );
 
+        $processorResponse = is_array($transactionData['processorResponse'] ?? null)
+            ? $transactionData['processorResponse']
+            : [];
         $processor = $transactionData['processor'] ?? [];
-        $processorResponse = $transactionData['processorResponse'] ?? [];
         $processorName = $processor['name']
             ?? $processor['processor']
             ?? ($processorResponse['processor'] ?? null);
         $processorName = Format::stringOrNull($processorName);
-        $processorStatus = $processor['status'] ?? ($processorResponse['status'] ?? null);
-        $processorStatus = Format::stringOrNull($processorStatus);
-        $processorCode = $processor['responseCode']
+        $acquirer = Format::stringOrNull($processorResponse['acquirer'] ?? null);
+        $processorStatus = Format::stringOrNull($processor['status'] ?? ($processorResponse['status'] ?? null));
+        $processorCode = Format::stringOrNull(
+            $processor['responseCode']
             ?? $processor['statusCode']
-            ?? ($processorResponse['responseCode'] ?? $processorResponse['statusCode'] ?? null);
-        $processorCode = Format::stringOrNull($processorCode);
-        $approvalCode = $processor['authCode']
+            ?? ($processorResponse['responseCode'] ?? $processorResponse['statusCode'] ?? null)
+        );
+        $approvalCode = Format::stringOrNull(
+            $processor['authCode']
             ?? $processor['approvalCode']
-            ?? ($processorResponse['authorizationCode'] ?? $processorResponse['approvalCode'] ?? null);
-        $approvalCode = Format::stringOrNull($approvalCode);
-        $retrievalRef = $processor['rrn']
+            ?? ($processorResponse['authorizationCode'] ?? $processorResponse['approvalCode'] ?? null)
+        );
+        $retrievalRef = Format::stringOrNull(
+            $processor['rrn']
             ?? $processor['retrievalReferenceNumber']
-            ?? ($processorResponse['retrievalReferenceNumber'] ?? $processorResponse['retrievalRefNum'] ?? null);
-        $retrievalRef = Format::stringOrNull($retrievalRef);
-        $batchId = $processor['batchId'] ?? ($processorResponse['batchId'] ?? null);
-        $batchId = Format::stringOrNull($batchId);
+            ?? ($processorResponse['retrievalReferenceNumber'] ?? $processorResponse['retrievalRefNum'] ?? null)
+        );
+        $batchId = Format::stringOrNull($processor['batchId'] ?? ($processorResponse['batchId'] ?? null));
+        $processorTransactionId = Format::stringOrNull($processorResponse['transactionId'] ?? null);
+        $approvedAmount = Format::amount($processorResponse['approvedAmount'] ?? null);
 
-        $customerUserId = Format::optionalInt($transactionData['customerUserId'] ?? null);
-
-        $referencesJson = Format::jsonArray($references);
+        $referencesJson = Format::jsonArray($transactionData['references'] ?? []);
+        $linksJson = Format::jsonArray($transactionData['links'] ?? []);
         $fundingSourceJson = Format::jsonObject($fundingSource);
-        $contextJson = Format::jsonObject($transactionData['context'] ?? []);
+        $contextJson = Format::jsonObject($context);
+        $processorOptionsJson = Format::jsonObject($transactionData['processorOptions'] ?? []);
+        $processorResponseJson = Format::jsonObject($processorResponse);
+        $amountsJson = Format::jsonObject($amounts);
         $rawPayload = Format::jsonObject($transactionData);
 
         $createdAtExt = Format::optionalTimestamp($transactionData['createdAt'] ?? null);
@@ -190,50 +204,76 @@ class TransactionService
         try {
             $this->context->getConn()->executeStatement(
                 'INSERT INTO transaction (
-                    transaction_id, business_id, store_id, order_id,
-                    action, status, settlement_status, settled, partially_approved,
+                    transaction_id, business_id, store_id, store_device_id, employee_user_id,
+                    signature_required, signature_captured, pin_captured, adjusted, amounts_adjusted,
+                    auth_only, partially_approved, action_void, voided, settled, reversal_void,
+                    action, status, settlement_status, transaction_instruction, source, source_app, mcc,
+                    customer_user_id, customer_language, customer_opted_no_tip,
                     txn_amount_minor, order_amount_minor, tip_amount_minor, cashback_amount_minor, currency,
-                    card_brand, last4, entry_mode,
-                    processor, processor_status, processor_code, approval_code, retrieval_ref, batch_id,
-                    customer_user_id, references_json, funding_source, context_json, raw_payload,
-                    created_at_ext, updated_at_ext,
+                    approved_amount_minor, processor, acquirer, processor_status, processor_code,
+                    approval_code, retrieval_ref, batch_id, processor_transaction_id,
+                    references_json, links_json, funding_source, context_json, processor_options, processor_response,
+                    amounts_json, raw_payload, created_at_ext, updated_at_ext,
                     created_at, updated_at
                 ) VALUES (
-                    :transactionId, :businessId, :storeId, :orderId,
-                    :action, :status, :settlementStatus, :settled, :partiallyApproved,
+                    :transactionId, :businessId, :storeId, :storeDeviceId, :employeeUserId,
+                    :signatureRequired, :signatureCaptured, :pinCaptured, :adjusted, :amountsAdjusted,
+                    :authOnly, :partiallyApproved, :actionVoid, :voided, :settled, :reversalVoid,
+                    :action, :status, :settlementStatus, :transactionInstruction, :source, :sourceApp, :mcc,
+                    :customerUserId, :customerLanguage, :customerOptedNoTip,
                     :txnAmountMinor, :orderAmountMinor, :tipAmountMinor, :cashbackAmountMinor, :currency,
-                    :cardBrand, :last4, :entryMode,
-                    :processor, :processorStatus, :processorCode, :approvalCode, :retrievalRef, :batchId,
-                    :customerUserId, :referencesJson, :fundingSource, :contextJson, :rawPayload,
-                    :createdAtExt, :updatedAtExt,
+                    :approvedAmountMinor, :processor, :acquirer, :processorStatus, :processorCode,
+                    :approvalCode, :retrievalRef, :batchId, :processorTransactionId,
+                    :referencesJson, :linksJson, :fundingSource, :contextJson, :processorOptions, :processorResponse,
+                    :amountsJson, :rawPayload, :createdAtExt, :updatedAtExt,
                     :createdAt, :updatedAt
                 ) ON CONFLICT (transaction_id) DO UPDATE SET
                     business_id = EXCLUDED.business_id,
                     store_id = EXCLUDED.store_id,
-                    order_id = EXCLUDED.order_id,
+                    store_device_id = EXCLUDED.store_device_id,
+                    employee_user_id = EXCLUDED.employee_user_id,
+                    signature_required = EXCLUDED.signature_required,
+                    signature_captured = EXCLUDED.signature_captured,
+                    pin_captured = EXCLUDED.pin_captured,
+                    adjusted = EXCLUDED.adjusted,
+                    amounts_adjusted = EXCLUDED.amounts_adjusted,
+                    auth_only = EXCLUDED.auth_only,
+                    partially_approved = EXCLUDED.partially_approved,
+                    action_void = EXCLUDED.action_void,
+                    voided = EXCLUDED.voided,
+                    settled = EXCLUDED.settled,
+                    reversal_void = EXCLUDED.reversal_void,
                     action = EXCLUDED.action,
                     status = EXCLUDED.status,
                     settlement_status = EXCLUDED.settlement_status,
-                    settled = EXCLUDED.settled,
-                    partially_approved = EXCLUDED.partially_approved,
+                    transaction_instruction = EXCLUDED.transaction_instruction,
+                    source = EXCLUDED.source,
+                    source_app = EXCLUDED.source_app,
+                    mcc = EXCLUDED.mcc,
+                    customer_user_id = EXCLUDED.customer_user_id,
+                    customer_language = EXCLUDED.customer_language,
+                    customer_opted_no_tip = EXCLUDED.customer_opted_no_tip,
                     txn_amount_minor = EXCLUDED.txn_amount_minor,
                     order_amount_minor = EXCLUDED.order_amount_minor,
                     tip_amount_minor = EXCLUDED.tip_amount_minor,
                     cashback_amount_minor = EXCLUDED.cashback_amount_minor,
                     currency = EXCLUDED.currency,
-                    card_brand = EXCLUDED.card_brand,
-                    last4 = EXCLUDED.last4,
-                    entry_mode = EXCLUDED.entry_mode,
+                    approved_amount_minor = EXCLUDED.approved_amount_minor,
                     processor = EXCLUDED.processor,
+                    acquirer = EXCLUDED.acquirer,
                     processor_status = EXCLUDED.processor_status,
                     processor_code = EXCLUDED.processor_code,
                     approval_code = EXCLUDED.approval_code,
                     retrieval_ref = EXCLUDED.retrieval_ref,
                     batch_id = EXCLUDED.batch_id,
-                    customer_user_id = EXCLUDED.customer_user_id,
+                    processor_transaction_id = EXCLUDED.processor_transaction_id,
                     references_json = EXCLUDED.references_json,
+                    links_json = EXCLUDED.links_json,
                     funding_source = EXCLUDED.funding_source,
                     context_json = EXCLUDED.context_json,
+                    processor_options = EXCLUDED.processor_options,
+                    processor_response = EXCLUDED.processor_response,
+                    amounts_json = EXCLUDED.amounts_json,
                     raw_payload = EXCLUDED.raw_payload,
                     created_at_ext = EXCLUDED.created_at_ext,
                     updated_at_ext = EXCLUDED.updated_at_ext,
@@ -242,30 +282,50 @@ class TransactionService
                     'transactionId' => $transactionId,
                     'businessId' => $businessId,
                     'storeId' => $storeId,
-                    'orderId' => $orderId,
+                    'storeDeviceId' => $storeDeviceId,
+                    'employeeUserId' => $employeeUserId,
+                    'signatureRequired' => $signatureRequired,
+                    'signatureCaptured' => $signatureCaptured,
+                    'pinCaptured' => $pinCaptured,
+                    'adjusted' => $adjusted,
+                    'amountsAdjusted' => $amountsAdjusted,
+                    'authOnly' => $authOnly,
+                    'partiallyApproved' => $partiallyApproved,
+                    'actionVoid' => $actionVoid,
+                    'voided' => $voided,
+                    'settled' => $settled,
+                    'reversalVoid' => $reversalVoid,
                     'action' => $action,
                     'status' => $status,
                     'settlementStatus' => $settlementStatus,
-                    'settled' => $settled,
-                    'partiallyApproved' => $partiallyApproved,
+                    'transactionInstruction' => $transactionInstruction,
+                    'source' => $source,
+                    'sourceApp' => $sourceApp,
+                    'mcc' => $mcc,
+                    'customerUserId' => $customerUserId,
+                    'customerLanguage' => $customerLanguage,
+                    'customerOptedNoTip' => $customerOptedNoTip,
                     'txnAmountMinor' => $transactionAmount,
                     'orderAmountMinor' => $orderAmount,
                     'tipAmountMinor' => $tipAmount,
                     'cashbackAmountMinor' => $cashbackAmount,
                     'currency' => $currency,
-                    'cardBrand' => $cardBrand,
-                    'last4' => $cardLast4,
-                    'entryMode' => $entryMode,
+                    'approvedAmountMinor' => $approvedAmount,
                     'processor' => $processorName,
+                    'acquirer' => $acquirer,
                     'processorStatus' => $processorStatus,
                     'processorCode' => $processorCode,
                     'approvalCode' => $approvalCode,
                     'retrievalRef' => $retrievalRef,
                     'batchId' => $batchId,
-                    'customerUserId' => $customerUserId,
+                    'processorTransactionId' => $processorTransactionId,
                     'referencesJson' => $referencesJson,
+                    'linksJson' => $linksJson,
                     'fundingSource' => $fundingSourceJson,
                     'contextJson' => $contextJson,
+                    'processorOptions' => $processorOptionsJson,
+                    'processorResponse' => $processorResponseJson,
+                    'amountsJson' => $amountsJson,
                     'rawPayload' => $rawPayload,
                     'createdAtExt' => $createdAtExt,
                     'updatedAtExt' => $updatedAtExt,
