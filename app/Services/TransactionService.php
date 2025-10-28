@@ -79,7 +79,7 @@ class TransactionService
     public function upsert(array $transactionData, ?array $receiptData = null): bool
     {
         // Require transaction id and business id
-        if (!isset($transactionData['id'], $transactionData['businessId'])) {
+        if (!isset($transactionData['id'])) {
             $this->context->getLog()->error(
                 'TransactionService::upsert: missing required fields id or businessId'
             );

@@ -71,24 +71,28 @@ CREATE INDEX idx_merchant_token_expires_at ON merchant_token(expires_at);
 -- Source (GET – Billing API): https://billing.poynt.net/apps/{appId}/subscriptions?businessId={businessId}
 --   Vraća aktivne pretplate za tvoj app; ova tablica je tvoja BI kopija.
 --   Docs: “REST API Integration – Get Subscriptions List”.
-CREATE TABLE subscription (
-  subscription_id     VARCHAR(255)     PRIMARY KEY,
-  business_id         VARCHAR(255)     NOT NULL,
-  store_id            VARCHAR(255)     NOT NULL,
-  plan_id             VARCHAR(255)     NOT NULL,
-  status              VARCHAR(50)      NOT NULL,
-  phase               VARCHAR(50)      NOT NULL,
-  trial_start_at      TIMESTAMPTZ,
-  trial_end_at        TIMESTAMPTZ,
-  start_at            TIMESTAMPTZ      NOT NULL,
-  current_period_end  TIMESTAMPTZ,
-  cancel_at_period_end BOOLEAN         NOT NULL DEFAULT FALSE,
-  canceled_at         TIMESTAMPTZ,
-  created_at          TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+DROP TABLE IF EXISTS subscription
+CREATE TABLE IF NOT EXISTS subscription (
+    subscription_id VARCHAR(255) PRIMARY KEY,
+    business_id VARCHAR(255) NOT NULL,
+    store_id VARCHAR(255),
+    plan_id VARCHAR(255) NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    phase VARCHAR(50) NOT NULL,
+    trial_start_at TIMESTAMPTZ,
+    trial_end_at TIMESTAMPTZ,
+    start_at TIMESTAMPTZ NOT NULL,
+    current_period_end TIMESTAMPTZ,
+    end_at TIMESTAMPTZ,
+    cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+    canceled_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_subscription_current_period_end ON subscription(current_period_end);
-CREATE INDEX idx_subscription_store_status ON subscription(store_id, status);
+CREATE INDEX IF NOT EXISTS idx_subscription_current_period_end ON subscription (current_period_end);
+CREATE INDEX IF NOT EXISTS idx_subscription_store_status ON subscription (store_id, status);
+
+
 
 -- Source: inbound webhooks (tvoj endpoint prima POST od Poynta) – nema Poynt GET-a.
 --   Za pregled konfiguracije i isporuka postoje odvojeni GET-ovi (/hooks, /hooks/{id}/deliveries) koje već
@@ -340,9 +344,13 @@ CREATE TABLE business_user (
   raw_payload    JSONB NOT NULL DEFAULT '{}',
   created_at_ext TIMESTAMPTZ,
   updated_at_ext TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ,
+  updated_at     TIMESTAMPTZ,
   PRIMARY KEY (business_id, user_id)
 );
 CREATE INDEX idx_user_business ON business_user(business_id, role);
+
+  select * from business_user;
 
 -- =========================
 -- PRODUCTS & VARIANTS
@@ -447,6 +455,39 @@ CREATE TABLE catalog_product (
   PRIMARY KEY (catalog_id, product_id)
 );
 
+ALTER TABLE catalog_product
+    ADD COLUMN IF NOT EXISTS created_at_ext TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS updated_at_ext TIMESTAMPTZ;
+
+ALTER TABLE catalog_product
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE catalog_product
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS catalog_product_tax (
+    catalog_id VARCHAR(255) NOT NULL,
+    product_id VARCHAR(255) NOT NULL,
+    tax_id VARCHAR(255) NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    created_at_ext TIMESTAMPTZ,
+    updated_at_ext TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (catalog_id, product_id, tax_id)
+);
+
+
+
+CREATE TABLE IF NOT EXISTS catalog_available_discount (
+    catalog_id VARCHAR(255) NOT NULL,
+    discount_id VARCHAR(255) NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (catalog_id, discount_id)
+);
+
 -- Source (GET): /businesses/{businessId}/categories
 --               /businesses/{businessId}/categories/{categoryId}
 CREATE TABLE category (
@@ -473,11 +514,14 @@ CREATE TABLE tax (
   active          BOOLEAN,
   raw_payload     JSONB NOT NULL DEFAULT '{}',
   created_at_ext  TIMESTAMPTZ,
-  updated_at_ext  TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at_ext  TIMESTAMPTZ
 );
 CREATE INDEX idx_tax_business ON tax(business_id, active);
+ALTER TABLE tax
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE tax
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- =========================
 -- PAYLINKS
@@ -488,70 +532,16 @@ CREATE INDEX idx_tax_business ON tax(business_id, active);
 CREATE TABLE paylink (
   paylink_id      VARCHAR(255) PRIMARY KEY,
   business_id     VARCHAR(255) NOT NULL,
-  url             TEXT,
-  vanity_url      TEXT,
   domain          VARCHAR(255),
-  title           TEXT,
-  description     TEXT,
   status          VARCHAR(32),
   amount_minor    BIGINT,
   currency        VARCHAR(3),
   metadata        JSONB NOT NULL DEFAULT '{}',
-  expires_at_ext  TIMESTAMPTZ,
   created_at_ext  TIMESTAMPTZ,
   updated_at_ext  TIMESTAMPTZ,
-  raw_payload     JSONB NOT NULL DEFAULT '{}',
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE TABLE paylink_item (
-  paylink_id    VARCHAR(255) NOT NULL,
-  business_id   VARCHAR(255) NOT NULL,
-  item_ref      VARCHAR(64) NOT NULL,
-  item_id       VARCHAR(255),
-  name          VARCHAR(255),
-  description   TEXT,
-  amount_minor  BIGINT,
-  currency      VARCHAR(3),
-  quantity      NUMERIC(18,3),
-  metadata      JSONB NOT NULL DEFAULT '{}',
-  payload       JSONB NOT NULL DEFAULT '{}',
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (paylink_id, item_ref)
-);
-CREATE INDEX idx_paylink_item_business ON paylink_item(business_id);
-
-CREATE TABLE paylink_payment (
-  paylink_id       VARCHAR(255) NOT NULL,
-  business_id      VARCHAR(255) NOT NULL,
-  payment_ref      VARCHAR(64) NOT NULL,
-  payment_id       VARCHAR(255),
-  status           VARCHAR(64),
-  amount_minor     BIGINT,
-  currency         VARCHAR(3),
-  processed_at_ext TIMESTAMPTZ,
-  payload          JSONB NOT NULL DEFAULT '{}',
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (paylink_id, payment_ref)
-);
-CREATE INDEX idx_paylink_payment_business ON paylink_payment(business_id);
-
-CREATE TABLE paylink_link (
-  paylink_id  VARCHAR(255) NOT NULL,
-  business_id VARCHAR(255) NOT NULL,
-  link_ref    VARCHAR(64) NOT NULL,
-  rel         VARCHAR(128),
-  href        TEXT,
-  method      VARCHAR(16),
-  payload     JSONB NOT NULL DEFAULT '{}',
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (paylink_id, link_ref)
-);
-CREATE INDEX idx_paylink_link_business ON paylink_link(business_id);
 
 -- =========================
 -- HOOKS (konfiguracija) & DELIVERIES (GET strana)
@@ -583,4 +573,69 @@ CREATE TABLE hook_delivery (
 );
 
 
-select * from log;
+-- CORE
+SELECT * FROM business;
+SELECT * FROM store;
+SELECT * FROM terminal;
+
+-- TOKENS
+SELECT * FROM app_token;
+SELECT * FROM merchant_token;
+
+-- SUBSCRIPTIONS
+SELECT * FROM subscription;
+
+-- WEBHOOK AUDIT & LOGGING
+SELECT * FROM webhook_audit;
+SELECT * FROM log;
+SELECT * FROM token_refresh_log;
+
+-- ORDERS
+SELECT * FROM "order";            -- napomena: ORDER je keyword pa mora u navodnike
+SELECT * FROM order_item;
+SELECT * FROM order_history;
+SELECT * FROM order_shipment;
+
+-- TRANSACTIONS
+SELECT * FROM transaction;
+SELECT * FROM transaction_receipt;
+
+-- CUSTOMERS
+SELECT * FROM customer;
+
+-- BUSINESS USERS
+SELECT * FROM business_user;
+
+-- PRODUCTS & VARIANTS
+SELECT * FROM product;
+SELECT * FROM product_variant;
+
+-- INVENTORY
+SELECT * FROM inventory_summary;
+SELECT * FROM inventory;
+SELECT * FROM variant_inventory;
+
+-- CATALOGS & CATEGORIES
+SELECT * FROM catalog;
+SELECT * FROM catalog_product;
+SELECT * FROM category;
+SELECT * FROM catalog_available_discount;
+SELECT * FROM catalog_product_tax;
+
+-- TAXES
+SELECT * FROM tax;
+
+-- PAYLINKS
+SELECT * FROM paylink;
+
+-- HOOKS & DELIVERIES
+SELECT * FROM hook;
+SELECT * FROM hook_delivery;
+
+SELECT * FROM log ORDER BY id DESC;
+
+
+
+
+
+-- https://poynt.secureserver.net/applications/authorize?client_id=urn:aid:2f3dad35-7121-4666-9b95-77aad5a36c50&redirect_uri=https%3A%2F%2F9cfbce9dcf9e.ngrok-free.app%2Fcallback
