@@ -42,117 +42,119 @@ namespace Services {
         public function testUpsertNormalisesTransactionPayload(): void
         {
             $transactionData = [
-                'id' => 'd2ac85ec-c346-4dcf-9695-e626bdb6add7',
-                'businessId' => '3fb53611-061a-4464-8ca7-0b91ca7c98cf',
+                'id' => '29c5b96d-0180-1000-d4b4-c6fb481f142d',
                 'signatureRequired' => false,
                 'signatureCaptured' => false,
                 'pinCaptured' => false,
-                'adjusted' => false,
-                'amountsAdjusted' => false,
-                'authOnly' => false,
+                'adjusted' => true,
+                'amountsAdjusted' => true,
+                'authOnly' => true,
                 'partiallyApproved' => false,
                 'actionVoid' => false,
                 'voided' => false,
-                'settled' => true,
+                'settled' => false,
                 'reversalVoid' => false,
-                'paymentTokenUsed' => false,
-                'createdAt' => '2025-07-21T07:30:05Z',
-                'updatedAt' => '2025-07-22T06:41:27Z',
+                'createdAt' => '2022-04-14T20:31:06Z',
+                'updatedAt' => '2022-04-14T20:32:22Z',
                 'context' => [
                     'businessType' => 'TEST_MERCHANT',
-                    'transmissionAtLocal' => '2025-07-21T07:30:05Z',
-                    'employeeUserId' => 518295917,
-                    'storeDeviceId' => 'urn:tid:3b09adcb-716b-3d76-a5e8-ab3deb449b29',
-                    'sourceApp' => 'co.poynt.virtualterminal',
-                    'mcc' => '1520',
-                    'applicationId' => 'urn:aid:virtual-terminal',
+                    'transmissionAtLocal' => '2022-04-14T20:31:05Z',
+                    'employeeUserId' => 369299726,
+                    'storeDeviceId' => 'urn:tid:c1e269b9-5afe-379e-b28c-c63a3373f3af',
+                    'sourceApp' => 'co.poynt.posconnector',
+                    'mcc' => '5812',
+                    'transactionInstruction' => 'ONLINE_AUTH_REQUIRED',
                     'source' => 'INSTORE',
-                    'businessId' => '3fb53611-061a-4464-8ca7-0b91ca7c98cf',
-                    'storeId' => '194a72bf-5802-4354-8ab6-fb482780cef6',
-                    'channelId' => 'b3b1e892-b073-11ee-bbe7-02bda9370977',
+                    'businessId' => 'a3f24e9e-6764-42f2-bbcd-5541e7f3be38',
+                    'storeId' => '0ac7c74b-d88e-4bd8-8d6b-ddf8db6ec700',
                 ],
                 'fundingSource' => [
                     'debit' => false,
-                    'debitOverride' => false,
-                    'debitBin' => false,
                     'card' => [
                         'cardBrand' => [
                             'createdAt' => '2020-05-27T16:14:32Z',
-                            'scheme' => 'MASTERCARD',
-                            'displayName' => 'Mastercard',
-                            'id' => '8cd7082b-2cdd-4264-a4e3-57f78851ead3',
+                            'scheme' => 'VISA',
+                            'displayName' => 'Visa',
+                            'id' => 'c74ab71f-9024-4de0-910d-54c6a9c2bbc5',
                         ],
-                        'type' => 'MASTERCARD',
+                        'type' => 'VISA',
                         'source' => 'DIRECT',
                         'status' => 'ACTIVE',
+                        'expirationDate' => 31,
                         'expirationMonth' => 12,
-                        'expirationYear' => 2027,
-                        'id' => 684057658,
-                        'numberFirst6' => '222300',
-                        'numberLast4' => '3222',
-                        'numberMasked' => '222300******3222',
-                        'numberHashed' => 'FA20B7098A5C729CACAD608C549A6EEE5594865766B7D037ECE91C0BDAEF5D8C',
+                        'expirationYear' => 2023,
+                        'id' => 369442365,
+                        'numberFirst6' => '405413',
+                        'numberLast4' => '6357',
+                        'numberMasked' => '4054136357',
                         'cardHolderFirstName' => '',
                         'cardHolderLastName' => '',
-                        'cardHolderFullName' => '',
-                        'cardId' => '79f5ee85-166f-438e-b919-8385720a3c3d',
+                        'cardHolderFullName' => '/',
+                        'serviceCode' => '201',
+                        'cardId' => '885f6b75-5e8f-4933-a55d-cc53a8dda6e9',
                     ],
                     'entryDetails' => [
-                        'customerPresenceStatus' => 'VIRTUAL_TERMINAL_NOT_PRESENT',
-                        'entryMode' => 'KEYED',
+                        'customerPresenceStatus' => 'PRESENT',
+                        'entryMode' => 'CONTACTLESS_MAGSTRIPE',
                     ],
                     'type' => 'CREDIT_DEBIT',
-                    'verificationData' => [
-                        'cardHolderBillingAddress' => [
-                            'status' => 'ADDED',
-                            'createdAt' => '2025-07-21T07:30:05Z',
-                            'updatedAt' => '2025-07-21T07:30:05Z',
-                            'id' => 43644892,
-                            'line1' => '2298 Client Ave',
-                            'postalCode' => '95076',
-                            'countryCode' => 'US',
-                        ],
+                ],
+                'links' => [
+                    [
+                        'href' => '71241c6f-ff98-46b2-879f-1805596465ca',
+                        'rel' => 'CAPTURE',
+                        'method' => 'GET',
                     ],
                 ],
-                'customerUserId' => 692824955,
+                'references' => [
+                    [
+                        'id' => '',
+                        'customType' => 'externalReferenceId',
+                        'type' => 'CUSTOM',
+                    ],
+                    [
+                        'id' => '38caea72-3965-48af-9dfe-ab81145abe4e',
+                        'type' => 'POYNT_ORDER',
+                    ],
+                ],
+                'customerUserId' => 369458304,
                 'processorOptions' => [
-                    'processorToken' => '0',
+                    'scaIndicator' => 'supported',
                 ],
                 'processorResponse' => [
-                    'avsResult' => [
-                        'addressResult' => 'MATCH',
-                        'postalCodeResult' => 'MATCH',
-                        'actualResult' => 'Y',
-                    ],
-                    'cvResult' => 'MATCH',
-                    'approvedAmount' => 1000,
+                    'approvedAmount' => 2500,
                     'processor' => 'MOCK',
-                    'acquirer' => 'POYNT',
+                    'acquirer' => 'CHASE_PAYMENTECH',
                     'status' => 'Successful',
                     'statusCode' => '1',
                     'statusMessage' => 'Successful',
-                    'approvalCode' => '419763',
+                    'transactionId' => '29c5b96d-0180-1000-d4b4-c6fb481f142d',
+                    'approvalCode' => '219475',
                     'batchId' => '1',
-                    'retrievalRefNum' => 'd2ac85ec-c346-4dcf-9695-e626bdb6add7',
-                    'cvActualResult' => 'M',
+                    'retrievalRefNum' => '29c5b96d-0180-1000-d4b4-c6fb481f142d',
                 ],
-                'transactionNumber' => '5c2aeb14-8464-471e-9fcf-3c27d150c29e',
                 'notes' => '',
-                'settlementStatus' => 'SETTLED',
-                'action' => 'SALE',
+                'customerLanguage' => 'en',
+                'settlementStatus' => 'UNSETTLED',
+                'action' => 'AUTHORIZE',
                 'amounts' => [
                     'customerOptedNoTip' => false,
-                    'transactionAmount' => 1000,
-                    'orderAmount' => 1000,
-                    'tipAmount' => 0,
+                    'transactionAmount' => 7500,
+                    'orderAmount' => 2500,
+                    'tipAmount' => 5000,
                     'cashbackAmount' => 0,
                     'currency' => 'USD',
                 ],
                 'status' => 'CAPTURED',
             ];
 
-            $expectedFundingSource = Format::jsonObject($transactionData['fundingSource']);
             $expectedContext = Format::jsonObject($transactionData['context']);
+            $expectedFundingSource = Format::jsonObject($transactionData['fundingSource']);
+            $expectedLinks = Format::jsonArray($transactionData['links']);
+            $expectedReferences = Format::jsonArray($transactionData['references']);
+            $expectedProcessorOptions = Format::jsonObject($transactionData['processorOptions']);
+            $expectedProcessorResponse = Format::jsonObject($transactionData['processorResponse']);
+            $expectedAmountsJson = Format::jsonObject($transactionData['amounts']);
             $expectedRawPayload = Format::jsonObject($transactionData);
             $expectedCreatedAtExt = Format::optionalTimestamp($transactionData['createdAt']);
             $expectedUpdatedAtExt = Format::optionalTimestamp($transactionData['updatedAt']);
@@ -164,39 +166,64 @@ namespace Services {
                     $this->stringContains('INSERT INTO transaction'),
                     $this->callback(function (array $params) use (
                         $transactionData,
-                        $expectedFundingSource,
                         $expectedContext,
+                        $expectedFundingSource,
+                        $expectedLinks,
+                        $expectedReferences,
+                        $expectedProcessorOptions,
+                        $expectedProcessorResponse,
+                        $expectedAmountsJson,
                         $expectedRawPayload,
                         $expectedCreatedAtExt,
                         $expectedUpdatedAtExt
                     ): bool {
                         self::assertSame($transactionData['id'], $params['transactionId']);
-                        self::assertSame($transactionData['businessId'], $params['businessId']);
-                        self::assertSame('194a72bf-5802-4354-8ab6-fb482780cef6', $params['storeId']);
-                        self::assertNull($params['orderId']);
-                        self::assertSame('SALE', $params['action']);
-                        self::assertSame('CAPTURED', $params['status']);
-                        self::assertSame('SETTLED', $params['settlementStatus']);
-                        self::assertTrue($params['settled']);
+                        self::assertSame('a3f24e9e-6764-42f2-bbcd-5541e7f3be38', $params['businessId']);
+                        self::assertSame('0ac7c74b-d88e-4bd8-8d6b-ddf8db6ec700', $params['storeId']);
+                        self::assertSame('urn:tid:c1e269b9-5afe-379e-b28c-c63a3373f3af', $params['storeDeviceId']);
+                        self::assertSame(369299726, $params['employeeUserId']);
+                        self::assertFalse($params['signatureRequired']);
+                        self::assertFalse($params['signatureCaptured']);
+                        self::assertFalse($params['pinCaptured']);
+                        self::assertTrue($params['adjusted']);
+                        self::assertTrue($params['amountsAdjusted']);
+                        self::assertTrue($params['authOnly']);
                         self::assertFalse($params['partiallyApproved']);
-                        self::assertSame(1000, $params['txnAmountMinor']);
-                        self::assertSame(1000, $params['orderAmountMinor']);
-                        self::assertSame(0, $params['tipAmountMinor']);
+                        self::assertFalse($params['actionVoid']);
+                        self::assertFalse($params['voided']);
+                        self::assertFalse($params['settled']);
+                        self::assertFalse($params['reversalVoid']);
+                        self::assertSame('AUTHORIZE', $params['action']);
+                        self::assertSame('CAPTURED', $params['status']);
+                        self::assertSame('UNSETTLED', $params['settlementStatus']);
+                        self::assertSame('ONLINE_AUTH_REQUIRED', $params['transactionInstruction']);
+                        self::assertSame('INSTORE', $params['source']);
+                        self::assertSame('co.poynt.posconnector', $params['sourceApp']);
+                        self::assertSame('5812', $params['mcc']);
+                        self::assertSame(369458304, $params['customerUserId']);
+                        self::assertSame('en', $params['customerLanguage']);
+                        self::assertFalse($params['customerOptedNoTip']);
+                        self::assertSame(7500, $params['txnAmountMinor']);
+                        self::assertSame(2500, $params['orderAmountMinor']);
+                        self::assertSame(5000, $params['tipAmountMinor']);
                         self::assertSame(0, $params['cashbackAmountMinor']);
                         self::assertSame('USD', $params['currency']);
-                        self::assertSame('Mastercard', $params['cardBrand']);
-                        self::assertSame('3222', $params['last4']);
-                        self::assertSame('KEYED', $params['entryMode']);
+                        self::assertSame(2500, $params['approvedAmountMinor']);
                         self::assertSame('MOCK', $params['processor']);
+                        self::assertSame('CHASE_PAYMENTECH', $params['acquirer']);
                         self::assertSame('Successful', $params['processorStatus']);
                         self::assertSame('1', $params['processorCode']);
-                        self::assertSame('419763', $params['approvalCode']);
-                        self::assertSame('d2ac85ec-c346-4dcf-9695-e626bdb6add7', $params['retrievalRef']);
+                        self::assertSame('219475', $params['approvalCode']);
+                        self::assertSame('29c5b96d-0180-1000-d4b4-c6fb481f142d', $params['retrievalRef']);
                         self::assertSame('1', $params['batchId']);
-                        self::assertSame(692824955, $params['customerUserId']);
-                        self::assertSame('[]', $params['referencesJson']);
+                        self::assertSame('29c5b96d-0180-1000-d4b4-c6fb481f142d', $params['processorTransactionId']);
+                        self::assertSame($expectedReferences, $params['referencesJson']);
+                        self::assertSame($expectedLinks, $params['linksJson']);
                         self::assertSame($expectedFundingSource, $params['fundingSource']);
                         self::assertSame($expectedContext, $params['contextJson']);
+                        self::assertSame($expectedProcessorOptions, $params['processorOptions']);
+                        self::assertSame($expectedProcessorResponse, $params['processorResponse']);
+                        self::assertSame($expectedAmountsJson, $params['amountsJson']);
                         self::assertSame($expectedRawPayload, $params['rawPayload']);
                         self::assertSame($expectedCreatedAtExt, $params['createdAtExt']);
                         self::assertSame($expectedUpdatedAtExt, $params['updatedAtExt']);
@@ -210,7 +237,7 @@ namespace Services {
 
             $service = new TransactionService(
                 $this->context,
-                $transactionData['businessId'],
+                null,
                 $this->createMock(ClientInterface::class)
             );
 
