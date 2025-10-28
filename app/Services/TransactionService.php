@@ -95,7 +95,10 @@ class TransactionService
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
-        $storeId = $transactionData['storeId'] ?? null;
+        $storeId = $transactionData['storeId']
+            ?? $transactionData['context']['storeId']
+            ?? null;
+        $storeId = Format::stringOrNull($storeId);
         $references = $transactionData['references'] ?? [];
         $orderId = $transactionData['orderId'] ?? null;
         if (!$orderId && is_array($references)) {
@@ -112,10 +115,15 @@ class TransactionService
                 }
             }
         }
+        $orderId = Format::stringOrNull($orderId);
 
         $action = $transactionData['action'] ?? $transactionData['type'] ?? null;
         $status = $transactionData['status'] ?? null;
-        $settlementStatus = $transactionData['settlementStatus'] ?? ($transactionData['processorResponse']['settlementStatus'] ?? null);
+        $settlementStatus = $transactionData['settlementStatus']
+            ?? ($transactionData['processorResponse']['settlementStatus'] ?? null);
+        $action = Format::stringOrNull($action);
+        $status = Format::stringOrNull($status);
+        $settlementStatus = Format::stringOrNull($settlementStatus);
         $settled = Format::optionalBool($transactionData['settled'] ?? null);
         $partiallyApproved = Format::optionalBool($transactionData['partiallyApproved'] ?? null);
 
@@ -124,25 +132,55 @@ class TransactionService
         $orderAmount = Format::amount($amounts['orderAmount'] ?? null);
         $tipAmount = Format::amount($amounts['tipAmount'] ?? null);
         $cashbackAmount = Format::amount($amounts['cashbackAmount'] ?? null);
-        $currency = $amounts['transactionAmount']['currency'] ?? $transactionData['currency'] ?? null;
+        $currency = $amounts['currency'] ?? null;
+        if ($currency === null && isset($amounts['transactionAmount']) && is_array($amounts['transactionAmount'])) {
+            $currency = $amounts['transactionAmount']['currency'] ?? null;
+        }
+        $currency = $currency ?? ($transactionData['currency'] ?? null);
+        $currency = Format::stringOrNull($currency);
 
-        $card = $transactionData['fundingSource']['card'] ?? [];
-        $cardBrand = $card['brand'] ?? null;
+        $fundingSource = $transactionData['fundingSource'] ?? [];
+        $card = $fundingSource['card'] ?? [];
+        $cardBrand = $card['brand'] ?? $card['cardBrand'] ?? null;
+        if (is_array($cardBrand)) {
+            $cardBrand = $cardBrand['displayName'] ?? $cardBrand['scheme'] ?? $cardBrand['name'] ?? null;
+        }
+        $cardBrand = $cardBrand ?? ($card['type'] ?? null);
+        $cardBrand = Format::stringOrNull($cardBrand);
         $cardLast4 = $card['numberLast4'] ?? ($card['lastFourDigits'] ?? null);
-        $entryMode = $card['entryMode'] ?? $card['entryMethod'] ?? ($transactionData['entryMode'] ?? null);
+        $cardLast4 = Format::stringOrNull($cardLast4);
+        $entryMode = $card['entryMode']
+            ?? $card['entryMethod']
+            ?? ($transactionData['entryMode'] ?? $fundingSource['entryDetails']['entryMode'] ?? null);
+        $entryMode = Format::stringOrNull($entryMode);
 
         $processor = $transactionData['processor'] ?? [];
-        $processorName = $processor['name'] ?? ($processor['processor'] ?? null);
-        $processorStatus = $processor['status'] ?? ($transactionData['processorResponse']['status'] ?? null);
-        $processorCode = $processor['responseCode'] ?? ($transactionData['processorResponse']['responseCode'] ?? null);
-        $approvalCode = $processor['authCode'] ?? ($transactionData['processorResponse']['authorizationCode'] ?? null);
-        $retrievalRef = $processor['rrn'] ?? ($transactionData['processorResponse']['retrievalReferenceNumber'] ?? null);
-        $batchId = $processor['batchId'] ?? ($transactionData['processorResponse']['batchId'] ?? null);
+        $processorResponse = $transactionData['processorResponse'] ?? [];
+        $processorName = $processor['name']
+            ?? $processor['processor']
+            ?? ($processorResponse['processor'] ?? null);
+        $processorName = Format::stringOrNull($processorName);
+        $processorStatus = $processor['status'] ?? ($processorResponse['status'] ?? null);
+        $processorStatus = Format::stringOrNull($processorStatus);
+        $processorCode = $processor['responseCode']
+            ?? $processor['statusCode']
+            ?? ($processorResponse['responseCode'] ?? $processorResponse['statusCode'] ?? null);
+        $processorCode = Format::stringOrNull($processorCode);
+        $approvalCode = $processor['authCode']
+            ?? $processor['approvalCode']
+            ?? ($processorResponse['authorizationCode'] ?? $processorResponse['approvalCode'] ?? null);
+        $approvalCode = Format::stringOrNull($approvalCode);
+        $retrievalRef = $processor['rrn']
+            ?? $processor['retrievalReferenceNumber']
+            ?? ($processorResponse['retrievalReferenceNumber'] ?? $processorResponse['retrievalRefNum'] ?? null);
+        $retrievalRef = Format::stringOrNull($retrievalRef);
+        $batchId = $processor['batchId'] ?? ($processorResponse['batchId'] ?? null);
+        $batchId = Format::stringOrNull($batchId);
 
         $customerUserId = Format::optionalInt($transactionData['customerUserId'] ?? null);
 
         $referencesJson = Format::jsonArray($references);
-        $fundingSource = Format::jsonObject($transactionData['fundingSource'] ?? []);
+        $fundingSourceJson = Format::jsonObject($fundingSource);
         $contextJson = Format::jsonObject($transactionData['context'] ?? []);
         $rawPayload = Format::jsonObject($transactionData);
 
@@ -226,7 +264,7 @@ class TransactionService
                     'batchId' => $batchId,
                     'customerUserId' => $customerUserId,
                     'referencesJson' => $referencesJson,
-                    'fundingSource' => $fundingSource,
+                    'fundingSource' => $fundingSourceJson,
                     'contextJson' => $contextJson,
                     'rawPayload' => $rawPayload,
                     'createdAtExt' => $createdAtExt,
