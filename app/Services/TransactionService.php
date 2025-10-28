@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Core\Context;
 use App\Services\Support\PoyntDataFormatter as Format;
+use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -202,6 +203,81 @@ class TransactionService
         $updatedAtExt = Format::optionalTimestamp($transactionData['updatedAt'] ?? null);
 
         try {
+            $params = [
+                'transactionId' => $transactionId,
+                'businessId' => $businessId,
+                'storeId' => $storeId,
+                'storeDeviceId' => $storeDeviceId,
+                'employeeUserId' => $employeeUserId,
+                'signatureRequired' => $signatureRequired,
+                'signatureCaptured' => $signatureCaptured,
+                'pinCaptured' => $pinCaptured,
+                'adjusted' => $adjusted,
+                'amountsAdjusted' => $amountsAdjusted,
+                'authOnly' => $authOnly,
+                'partiallyApproved' => $partiallyApproved,
+                'actionVoid' => $actionVoid,
+                'voided' => $voided,
+                'settled' => $settled,
+                'reversalVoid' => $reversalVoid,
+                'action' => $action,
+                'status' => $status,
+                'settlementStatus' => $settlementStatus,
+                'transactionInstruction' => $transactionInstruction,
+                'source' => $source,
+                'sourceApp' => $sourceApp,
+                'mcc' => $mcc,
+                'customerUserId' => $customerUserId,
+                'customerLanguage' => $customerLanguage,
+                'customerOptedNoTip' => $customerOptedNoTip,
+                'txnAmountMinor' => $transactionAmount,
+                'orderAmountMinor' => $orderAmount,
+                'tipAmountMinor' => $tipAmount,
+                'cashbackAmountMinor' => $cashbackAmount,
+                'currency' => $currency,
+                'approvedAmountMinor' => $approvedAmount,
+                'processor' => $processorName,
+                'acquirer' => $acquirer,
+                'processorStatus' => $processorStatus,
+                'processorCode' => $processorCode,
+                'approvalCode' => $approvalCode,
+                'retrievalRef' => $retrievalRef,
+                'batchId' => $batchId,
+                'processorTransactionId' => $processorTransactionId,
+                'referencesJson' => $referencesJson,
+                'linksJson' => $linksJson,
+                'fundingSource' => $fundingSourceJson,
+                'contextJson' => $contextJson,
+                'processorOptions' => $processorOptionsJson,
+                'processorResponse' => $processorResponseJson,
+                'amountsJson' => $amountsJson,
+                'rawPayload' => $rawPayload,
+                'createdAtExt' => $createdAtExt,
+                'updatedAtExt' => $updatedAtExt,
+                'createdAt' => $now,
+                'updatedAt' => $now,
+            ];
+
+            $booleanFields = [
+                'signatureRequired',
+                'signatureCaptured',
+                'pinCaptured',
+                'adjusted',
+                'amountsAdjusted',
+                'authOnly',
+                'partiallyApproved',
+                'actionVoid',
+                'voided',
+                'settled',
+                'reversalVoid',
+                'customerOptedNoTip',
+            ];
+
+            $types = [];
+            foreach ($booleanFields as $field) {
+                $types[$field] = $params[$field] === null ? ParameterType::NULL : ParameterType::BOOLEAN;
+            }
+
             $this->context->getConn()->executeStatement(
                 'INSERT INTO transaction (
                     transaction_id, business_id, store_id, store_device_id, employee_user_id,
@@ -278,60 +354,8 @@ class TransactionService
                     created_at_ext = EXCLUDED.created_at_ext,
                     updated_at_ext = EXCLUDED.updated_at_ext,
                     updated_at = EXCLUDED.updated_at',
-                [
-                    'transactionId' => $transactionId,
-                    'businessId' => $businessId,
-                    'storeId' => $storeId,
-                    'storeDeviceId' => $storeDeviceId,
-                    'employeeUserId' => $employeeUserId,
-                    'signatureRequired' => $signatureRequired,
-                    'signatureCaptured' => $signatureCaptured,
-                    'pinCaptured' => $pinCaptured,
-                    'adjusted' => $adjusted,
-                    'amountsAdjusted' => $amountsAdjusted,
-                    'authOnly' => $authOnly,
-                    'partiallyApproved' => $partiallyApproved,
-                    'actionVoid' => $actionVoid,
-                    'voided' => $voided,
-                    'settled' => $settled,
-                    'reversalVoid' => $reversalVoid,
-                    'action' => $action,
-                    'status' => $status,
-                    'settlementStatus' => $settlementStatus,
-                    'transactionInstruction' => $transactionInstruction,
-                    'source' => $source,
-                    'sourceApp' => $sourceApp,
-                    'mcc' => $mcc,
-                    'customerUserId' => $customerUserId,
-                    'customerLanguage' => $customerLanguage,
-                    'customerOptedNoTip' => $customerOptedNoTip,
-                    'txnAmountMinor' => $transactionAmount,
-                    'orderAmountMinor' => $orderAmount,
-                    'tipAmountMinor' => $tipAmount,
-                    'cashbackAmountMinor' => $cashbackAmount,
-                    'currency' => $currency,
-                    'approvedAmountMinor' => $approvedAmount,
-                    'processor' => $processorName,
-                    'acquirer' => $acquirer,
-                    'processorStatus' => $processorStatus,
-                    'processorCode' => $processorCode,
-                    'approvalCode' => $approvalCode,
-                    'retrievalRef' => $retrievalRef,
-                    'batchId' => $batchId,
-                    'processorTransactionId' => $processorTransactionId,
-                    'referencesJson' => $referencesJson,
-                    'linksJson' => $linksJson,
-                    'fundingSource' => $fundingSourceJson,
-                    'contextJson' => $contextJson,
-                    'processorOptions' => $processorOptionsJson,
-                    'processorResponse' => $processorResponseJson,
-                    'amountsJson' => $amountsJson,
-                    'rawPayload' => $rawPayload,
-                    'createdAtExt' => $createdAtExt,
-                    'updatedAtExt' => $updatedAtExt,
-                    'createdAt' => $now,
-                    'updatedAt' => $now,
-                ]
+                $params,
+                $types
             );
 
             if ($receiptData !== null) {
