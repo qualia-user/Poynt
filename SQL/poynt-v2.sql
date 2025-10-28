@@ -252,51 +252,70 @@ CREATE TABLE order_shipment (
 -- Source (GET): /businesses/{businessId}/transactions
 --               /businesses/{businessId}/transactions/{transactionId}
 CREATE TABLE transaction (
-  transaction_id     VARCHAR(255) PRIMARY KEY,
-  business_id        VARCHAR(255) NOT NULL,
-  store_id           VARCHAR(255),
-  order_id           VARCHAR(255),     -- iz references[type='POYNT_ORDER']
-  action             VARCHAR(32),      -- SALE/AUTHORIZE/CAPTURE/REFUND/VOID...
-  status             VARCHAR(32),      -- APPROVED/DECLINED/VOIDED/...
-  settlement_status  VARCHAR(32),
-  settled            BOOLEAN,
-  partially_approved BOOLEAN,
+  transaction_id           VARCHAR(255) PRIMARY KEY,
+  business_id              VARCHAR(255) NOT NULL,
+  store_id                 VARCHAR(255),
+  store_device_id          VARCHAR(255),
+  employee_user_id         BIGINT,
+  signature_required       BOOLEAN,
+  signature_captured       BOOLEAN,
+  pin_captured             BOOLEAN,
+  adjusted                 BOOLEAN,
+  amounts_adjusted         BOOLEAN,
+  auth_only                BOOLEAN,
+  partially_approved       BOOLEAN,
+  action_void              BOOLEAN,
+  voided                   BOOLEAN,
+  settled                  BOOLEAN,
+  reversal_void            BOOLEAN,
+
+  action                   VARCHAR(32),      -- AUTHORIZE/SALE/REFUND/...
+  status                   VARCHAR(32),      -- AUTHORIZED/CAPTURED/VOIDED/...
+  settlement_status        VARCHAR(32),
+  transaction_instruction  VARCHAR(64),
+  source                   VARCHAR(32),
+  source_app               VARCHAR(255),
+  mcc                      VARCHAR(16),
+
+  customer_user_id         BIGINT,
+  customer_language        VARCHAR(16),
+  customer_opted_no_tip    BOOLEAN,
 
   -- amounts (minor units)
-  txn_amount_minor       BIGINT,
-  order_amount_minor     BIGINT,
-  tip_amount_minor       BIGINT,
-  cashback_amount_minor  BIGINT,
-  currency               VARCHAR(3),
-
-  -- card / entry
-  card_brand         VARCHAR(32),
-  last4              VARCHAR(4),
-  entry_mode         VARCHAR(64),
+  txn_amount_minor         BIGINT,
+  order_amount_minor       BIGINT,
+  tip_amount_minor         BIGINT,
+  cashback_amount_minor    BIGINT,
+  currency                 VARCHAR(3),
+  approved_amount_minor    BIGINT,
 
   -- processor
-  processor          VARCHAR(64),
-  processor_status   VARCHAR(64),
-  processor_code     VARCHAR(32),
-  approval_code      VARCHAR(32),
-  retrieval_ref      VARCHAR(64),
-  batch_id           VARCHAR(64),
+  processor                VARCHAR(64),
+  acquirer                 VARCHAR(64),
+  processor_status         VARCHAR(64),
+  processor_code           VARCHAR(32),
+  approval_code            VARCHAR(32),
+  retrieval_ref            VARCHAR(64),
+  batch_id                 VARCHAR(64),
+  processor_transaction_id VARCHAR(255),
 
-  customer_user_id   BIGINT,
+  references_json          JSONB NOT NULL DEFAULT '[]',
+  links_json               JSONB NOT NULL DEFAULT '[]',
+  funding_source           JSONB NOT NULL DEFAULT '{}',
+  context_json             JSONB NOT NULL DEFAULT '{}',
+  processor_options        JSONB NOT NULL DEFAULT '{}',
+  processor_response       JSONB NOT NULL DEFAULT '{}',
+  amounts_json             JSONB NOT NULL DEFAULT '{}',
+  raw_payload              JSONB NOT NULL DEFAULT '{}',
 
-  references_json    JSONB NOT NULL DEFAULT '[]',
-  funding_source     JSONB NOT NULL DEFAULT '{}',
-  context_json       JSONB NOT NULL DEFAULT '{}',
-  raw_payload        JSONB NOT NULL DEFAULT '{}',
-
-  created_at_ext     TIMESTAMPTZ,
-  updated_at_ext     TIMESTAMPTZ,
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at_ext           TIMESTAMPTZ,
+  updated_at_ext           TIMESTAMPTZ,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_tx_business_updated ON transaction(business_id, updated_at_ext);
-CREATE INDEX idx_tx_order            ON transaction(order_id);
-CREATE INDEX idx_tx_action_status    ON transaction(action, status);
+CREATE INDEX idx_tx_status          ON transaction(status);
+CREATE INDEX idx_tx_action          ON transaction(action);
 
 -- Source (GET, opcionalno): /businesses/{businessId}/transactions/{transactionId}/receipt
 CREATE TABLE transaction_receipt (
