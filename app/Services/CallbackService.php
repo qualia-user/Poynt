@@ -149,6 +149,16 @@ class CallbackService
             return false;
         }
 
+        $this->context->getLog()->info(
+            sprintf('CallbackService::runBusinessWorkflow starting for business %s.', $businessId),
+            [
+                'businessId' => $businessId,
+                'storeId' => $storeId,
+                'requestedPlanId' => $requestedPlanId,
+                'requestedPlanName' => $requestedPlanName,
+            ]
+        );
+
         $conn = $this->context->getConn();
         $transactionStarted = false;
 
@@ -156,14 +166,32 @@ class CallbackService
             $conn->beginTransaction();
             $transactionStarted = true;
 
+            $this->context->getLog()->debug(
+                sprintf('CallbackService::runBusinessWorkflow transaction started for business %s.', $businessId)
+            );
+
             if ($this->installationExists($businessId)) {
+                $this->context->getLog()->info(
+                    sprintf('Existing installation detected for business %s, reactivating.', $businessId)
+                );
                 $this->reactivateInstallation($businessId);
             } else {
+                $this->context->getLog()->info(
+                    sprintf('No existing installation found for business %s, attempting trial start if necessary.', $businessId)
+                );
                 $this->startTrialIfMissing($businessId, $storeId);
             }
 
             $appAccessToken = $this->extractAccessToken($appToken);
             $merchantAccessToken = $this->extractAccessToken($merchantToken);
+
+            $this->context->getLog()->debug(
+                sprintf('CallbackService::runBusinessWorkflow extracted access tokens for business %s.', $businessId),
+                [
+                    'appTokenPresent' => $appAccessToken !== null,
+                    'merchantTokenPresent' => $merchantAccessToken !== null,
+                ]
+            );
 
             if (!$this->synchronizeStoresAndSubscriptions(
                 $businessId,
@@ -177,6 +205,10 @@ class CallbackService
                 );
             }
 
+            $this->context->getLog()->info(
+                sprintf('CallbackService::runBusinessWorkflow completed store/subscription sync for business %s.', $businessId)
+            );
+
             if (!$this->gatherInitialResources($businessId)) {
                 throw new RuntimeException(
                     sprintf('Failed to gather onboarding resources for business %s.', $businessId)
@@ -185,8 +217,14 @@ class CallbackService
 
             $conn->commit();
 
+            $this->context->getLog()->info(
+                sprintf('CallbackService::runBusinessWorkflow finished successfully for business %s.', $businessId)
+            );
+
             return true;
         } catch (Throwable $e) {
+            $this->logWorkflowFailureRootCause($businessId, $e);
+
             if ($transactionStarted && method_exists($conn, 'isTransactionActive') && $conn->isTransactionActive()) {
                 $conn->rollBack();
             } elseif ($transactionStarted) {
@@ -215,6 +253,40 @@ class CallbackService
 
             return false;
         }
+    }
+
+    private function logWorkflowFailureRootCause(?string $businessId, Throwable $exception): void
+    {
+        $rootCause = $this->extractRootCause($exception);
+
+        $message = sprintf(
+            'CallbackService::runBusinessWorkflow root cause for business %s: %s (%s:%d)',
+            $businessId ?? 'unknown',
+            $rootCause->getMessage(),
+            $rootCause->getFile(),
+            $rootCause->getLine()
+        );
+
+        $context = [
+            'exception' => $exception,
+            'rootCauseClass' => get_class($rootCause),
+            'rootCauseTrace' => $rootCause->getTraceAsString(),
+        ];
+
+        $this->context->getLog()->critical($message, $context);
+
+        error_log($message . PHP_EOL . $rootCause->getTraceAsString());
+    }
+
+    private function extractRootCause(Throwable $exception): Throwable
+    {
+        $rootCause = $exception;
+
+        while ($rootCause->getPrevious() instanceof Throwable) {
+            $rootCause = $rootCause->getPrevious();
+        }
+
+        return $rootCause;
     }
 
     private function installationExists(string $businessId): bool
@@ -690,13 +762,46 @@ class CallbackService
 
     private function gatherInitialResources(string $businessId): bool
     {
+        $this->context->getLog()->info(
+            sprintf('CallbackService::gatherInitialResources starting for business %s.', $businessId)
+        );
+
         $allSuccessful = true;
         foreach ($this->serviceFactory->onboardingResources($businessId) as $service) {
-            $result = $this->syncResourceCollection($businessId, $service);
+            $serviceClass = get_class($service);
+
+            $this->context->getLog()->info(
+                sprintf('CallbackService::gatherInitialResources syncing %s for business %s.', $serviceClass, $businessId)
+            );
+
+            $result = $this->syncResourceCollection($businessId, $service, $serviceClass);
             if (!$result) {
                 $allSuccessful = false;
+                $this->context->getLog()->warning(
+                    sprintf(
+                        'CallbackService::gatherInitialResources encountered issues while syncing %s for business %s.',
+                        $serviceClass,
+                        $businessId
+                    )
+                );
+            } else {
+                $this->context->getLog()->info(
+                    sprintf(
+                        'CallbackService::gatherInitialResources completed %s for business %s successfully.',
+                        $serviceClass,
+                        $businessId
+                    )
+                );
             }
         }
+
+        $this->context->getLog()->info(
+            sprintf(
+                'CallbackService::gatherInitialResources finished for business %s with status: %s.',
+                $businessId,
+                $allSuccessful ? 'success' : 'partial-failure'
+            )
+        );
 
         return $allSuccessful;
     }
@@ -704,35 +809,61 @@ class CallbackService
     /**
      * @param object $service
      */
-    private function syncResourceCollection(string $businessId, object $service): bool
+    private function syncResourceCollection(string $businessId, object $service, ?string $serviceClass = null): bool
     {
+        $serviceClass = $serviceClass ?? get_class($service);
+
         if (!method_exists($service, 'fetchByBusinessId') || !method_exists($service, 'upsert')) {
+            $this->context->getLog()->debug(
+                sprintf(
+                    'CallbackService::syncResourceCollection skipping %s for business %s due to missing interface methods.',
+                    $serviceClass,
+                    $businessId
+                )
+            );
+
             return true;
         }
 
         try {
+            $this->context->getLog()->debug(
+                sprintf('CallbackService::syncResourceCollection fetching data from %s for business %s.', $serviceClass, $businessId)
+            );
             $raw = $service->fetchByBusinessId($businessId);
         } catch (Throwable $e) {
             $this->context->getLog()->error(
                 sprintf(
-                    'Failed to fetch onboarding resources for business %s: %s',
+                    'Failed to fetch onboarding resources via %s for business %s: %s',
+                    $serviceClass,
                     $businessId,
                     $e->getMessage()
-                )
+                ),
+                ['exception' => $e]
             );
             return false;
         }
 
         if ($raw === false) {
+            $this->context->getLog()->warning(
+                sprintf('CallbackService::syncResourceCollection received false payload from %s for business %s.', $serviceClass, $businessId)
+            );
+
             return false;
         }
 
         if (!is_array($raw) || empty($raw)) {
+            $this->context->getLog()->info(
+                sprintf('CallbackService::syncResourceCollection received empty payload from %s for business %s.', $serviceClass, $businessId)
+            );
+
             return true;
         }
 
         $normalized = $this->normalizeResourceItems($raw);
         $allSuccessful = true;
+        $processedItems = 0;
+        $successfulItems = 0;
+        $failedItems = 0;
 
         foreach ($normalized['items'] as $item) {
             if (!is_array($item)) {
@@ -741,22 +872,47 @@ class CallbackService
 
             try {
                 $result = $service->upsert($item);
+                $processedItems++;
                 if ($result === false) {
                     $allSuccessful = false;
+                    $failedItems++;
+                    $this->context->getLog()->warning(
+                        sprintf(
+                            'CallbackService::syncResourceCollection upsert returned false for %s during business %s.',
+                            $serviceClass,
+                            $businessId
+                        ),
+                        ['item' => $item]
+                    );
+                } else {
+                    $successfulItems++;
                 }
             } catch (Throwable $e) {
+                $processedItems++;
+                $failedItems++;
                 $this->context->getLog()->error(
                     sprintf(
-                        'Failed to persist onboarding resource for business %s: %s',
+                        'Failed to persist onboarding resource via %s for business %s: %s',
+                        $serviceClass,
                         $businessId,
                         $e->getMessage()
-                    )
+                    ),
+                    ['exception' => $e, 'item' => $item]
                 );
                 $allSuccessful = false;
             }
         }
 
         $this->recordResourceLinks($service, $businessId, $normalized['links']);
+
+        $this->context->getLog()->info(
+            sprintf('CallbackService::syncResourceCollection summary for %s business %s.', $serviceClass, $businessId),
+            [
+                'processedItems' => $processedItems,
+                'successfulItems' => $successfulItems,
+                'failedItems' => $failedItems,
+            ]
+        );
 
         return $allSuccessful;
     }
