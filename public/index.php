@@ -7,7 +7,6 @@ use App\Config\ConfigApp;
 use App\Config\ConfigDatabase;
 use Doctrine\DBAL\Exception;
 use League\Container\Container;
-use Monolog\Logger;
 use Phroute\Phroute\Dispatcher;
 use App\Core\Api;
 use App\Core\Context;
@@ -15,8 +14,7 @@ use App\Core\RouterResolver;
 use App\Core\Response;
 use Doctrine\DBAL\DriverManager;
 use App\Http\GuzzleClientFactory;
-use App\Services\CustomPDOHandler;
-use Ramsey\Uuid\Uuid;
+use App\Services\Support\LoggerFactory;
 
 // Ensure CLI compatibility for testing
 if (php_sapi_name() === 'cli') {
@@ -43,25 +41,21 @@ $connectionParams = [
     'driverOptions' => $options,
 ];
 
+$logConnection = null;
+
 try {
     $conn = DriverManager::getConnection($connectionParams);
     $conn->executeStatement("SET TIME ZONE '" . ConfigApp::$timezone . "'");
     //$conn->executeStatement("SET search_path TO scheme,scheme"); TODO schemas
+
+    $logConnection = DriverManager::getConnection($connectionParams);
+    $logConnection->executeStatement("SET TIME ZONE '" . ConfigApp::$timezone . "'");
 } catch (Exception $e) {
 
 }
 
 // Logger setup
-$logHandler = new CustomPDOHandler($conn);
-$log = new Logger('app-poynt-log');
-$log->pushHandler($logHandler);
-
-// Add a unique request ID to the context
-$requestId = Uuid::uuid4()->toString();
-$log->pushProcessor(function ($record) use ($requestId) {
-    $record['context']['request_id'] = $requestId;
-    return $record;
-});
+[$log, $requestId] = LoggerFactory::create($conn, $logConnection);
 
 $api = new Api($_REQUEST['request'] ?? '', $log, $requestId);
 $httpClientFactory = new GuzzleClientFactory();
