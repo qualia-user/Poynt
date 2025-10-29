@@ -10,11 +10,9 @@ use App\Core\Context;
 use App\Http\GuzzleClientFactory;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Services\CallbackService;
-use App\Services\CustomPDOHandler;
+use App\Services\Support\LoggerFactory;
 use App\Services\ServiceFactory;
 use Doctrine\DBAL\DriverManager;
-use Monolog\Logger;
-use Ramsey\Uuid\Uuid;
 require_once __DIR__ . '/../public/bootstrap.php';
 
 /**
@@ -100,15 +98,10 @@ $connectionParams = [
 $conn = DriverManager::getConnection($connectionParams);
 $conn->executeStatement("SET TIME ZONE '" . ConfigApp::$timezone . "'");
 
-$logHandler = new CustomPDOHandler($conn);
-$log = new Logger('app-poynt-log');
-$log->pushHandler($logHandler);
-$requestId = Uuid::uuid4()->toString();
-$log->pushProcessor(static function ($record) use ($requestId) {
-    $record['context']['request_id'] = $requestId;
+$logConnection = DriverManager::getConnection($connectionParams);
+$logConnection->executeStatement("SET TIME ZONE '" . ConfigApp::$timezone . "'");
 
-    return $record;
-});
+[$log, $requestId] = LoggerFactory::create($conn, $logConnection);
 
 $api = new Api('', $log, $requestId);
 $httpClientFactory = new GuzzleClientFactory();
