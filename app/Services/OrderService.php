@@ -73,7 +73,12 @@ class OrderService
      */
     public function upsert(array $orderData): bool
     {
-        if (!isset($orderData['id'], $orderData['businessId'])) {
+        $businessId = $this->coalesceValue($orderData, [
+            ['businessId'],
+            ['context', 'businessId'],
+        ]);
+
+        if (!isset($orderData['id']) || $businessId === null) {
             $this->context->getLog()->error(
                 'OrderService::upsert: missing required order fields (id or businessId)'
             );
@@ -81,11 +86,22 @@ class OrderService
         }
 
         $orderId = $orderData['id'];
-        $businessId = $orderData['businessId'];
-        $storeId = $orderData['storeId'] ?? null;
-        $status = $orderData['status'] ?? null;
-        $fulfillmentStatus = $orderData['fulfillmentStatus'] ?? null;
-        $transactionStatusSummary = $orderData['transactionStatusSummary'] ?? null;
+        $storeId = $this->coalesceValue($orderData, [
+            ['storeId'],
+            ['context', 'storeId'],
+        ]);
+        $status = $this->coalesceValue($orderData, [
+            ['status'],
+            ['statuses', 'status'],
+        ]);
+        $fulfillmentStatus = $this->coalesceValue($orderData, [
+            ['fulfillmentStatus'],
+            ['statuses', 'fulfillmentStatus'],
+        ]);
+        $transactionStatusSummary = $this->coalesceValue($orderData, [
+            ['transactionStatusSummary'],
+            ['statuses', 'transactionStatusSummary'],
+        ]);
 
         $currency = $this->coalesceValue($orderData, [
             ['currency'],
@@ -134,14 +150,22 @@ class OrderService
         ]);
 
         $customerUserId = Format::optionalInt($orderData['customerUserId'] ?? $orderData['customer']['userId'] ?? null);
-        $employeeUserId = Format::optionalInt($orderData['employeeUserId'] ?? null);
+        $employeeUserId = Format::optionalInt($orderData['employeeUserId'] ?? $orderData['context']['employeeUserId'] ?? null);
         $storeDeviceId = $this->coalesceValue($orderData, [
             ['storeDeviceId'],
             ['deviceId'],
             ['context', 'storeDeviceId'],
         ]);
-        $source = $orderData['source'] ?? null;
-        $sourceApp = $orderData['sourceApp'] ?? $orderData['sourceApplication'] ?? null;
+        $source = $this->coalesceValue($orderData, [
+            ['source'],
+            ['context', 'source'],
+        ]);
+        $sourceApp = $this->coalesceValue($orderData, [
+            ['sourceApp'],
+            ['sourceApplication'],
+            ['context', 'sourceApp'],
+            ['context', 'sourceApplication'],
+        ]);
 
         $taxExempted = Format::optionalBool($orderData['taxExempted'] ?? null);
         $valid = Format::optionalBool($orderData['valid'] ?? null);
