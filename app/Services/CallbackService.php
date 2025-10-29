@@ -143,10 +143,6 @@ class CallbackService
         ?string $requestedPlanId,
         ?string $requestedPlanName
     ): bool {
-        // The Context logger returned here already writes through the dedicated autocommit
-        // logging connection that LoggerFactory wires up in the entrypoints, so no additional
-        // changes are required in the workflow itself to persist diagnostic output during
-        // rollbacks.
 
         if (!$businessId) {
             $this->context->getLog()->warning('Skipping onboarding sync: missing businessId in callback response.');
