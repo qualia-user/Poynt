@@ -33,8 +33,12 @@ final class FetchResponseLogger
             'isDevelopment',
             'development',
         ] as $property) {
-            if (property_exists(ConfigApp::class, $property)) {
-                return (bool) ConfigApp::${$property};
+            if (!property_exists(ConfigApp::class, $property)) {
+                continue;
+            }
+
+            if ((bool) ConfigApp::${$property}) {
+                return true;
             }
         }
 

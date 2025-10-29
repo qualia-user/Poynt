@@ -6,6 +6,7 @@ namespace App\Config {
     if (!class_exists(__NAMESPACE__ . '\\ConfigApp')) {
         class ConfigApp
         {
+            public static bool $logFetchByBusinessIdResponses = false;
             public static bool $logFetchResponses = true;
         }
     }
@@ -23,7 +24,22 @@ namespace Tests\Services\Support {
         protected function setUp(): void
         {
             parent::setUp();
+            \App\Config\ConfigApp::$logFetchByBusinessIdResponses = false;
             \App\Config\ConfigApp::$logFetchResponses = true;
+        }
+
+        public function testLoggingEnabledWhenAnyConfigFlagIsTrue(): void
+        {
+            \App\Config\ConfigApp::$logFetchByBusinessIdResponses = true;
+            \App\Config\ConfigApp::$logFetchResponses = false;
+
+            $logger = new RecordingLogger();
+
+            FetchResponseLogger::info($logger, 'enabled message');
+
+            self::assertCount(1, $logger->records);
+            $record = $logger->records[0];
+            self::assertSame('enabled message', $record['message']);
         }
 
         public function testContextIsMovedIntoDetailsAndTypeDefaults(): void
