@@ -17,7 +17,7 @@ final class FetchResponseLogger
             return;
         }
 
-        $logger->info($message, $context);
+        $logger->info($message, self::normaliseContext($context));
     }
 
     private static function shouldLogResponses(): bool
@@ -61,5 +61,47 @@ final class FetchResponseLogger
     private static function getEnv(string $key): ?string
     {
         return $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key) ?: null;
+    }
+
+    /**
+     * Ensure all context payload is stored under the "details" key so it reaches the database layer.
+     */
+    private static function normaliseContext(array $context): array
+    {
+        $details = [];
+
+        if (array_key_exists('details', $context)) {
+            $providedDetails = $context['details'];
+
+            if (is_array($providedDetails)) {
+                $details = $providedDetails;
+            } elseif ($providedDetails !== null) {
+                $details = ['value' => $providedDetails];
+            }
+
+            unset($context['details']);
+        }
+
+        $allowedTopLevelKeys = array_flip([
+            'type',
+            'merchant',
+            'url',
+            'request_id',
+        ]);
+
+        $extraContext = array_diff_key($context, $allowedTopLevelKeys);
+        $context = array_intersect_key($context, $allowedTopLevelKeys);
+
+        if (!empty($extraContext)) {
+            $details = array_merge($extraContext, $details);
+        }
+
+        $context['details'] = $details;
+
+        if (!isset($context['type'])) {
+            $context['type'] = 'fetch_response';
+        }
+
+        return $context;
     }
 }
