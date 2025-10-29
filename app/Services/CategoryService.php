@@ -50,8 +50,18 @@ class CategoryService
             }
 
             $categories = $this->collectCategories($businessId, $accessToken, $catalogs);
+            $payload = array_values($categories);
 
-            return array_values($categories);
+            $this->context->getLog()->info(
+                'CategoryService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'categories',
+                    'payload' => $payload,
+                ]
+            );
+
+            return $payload;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error('CategoryService::fetchByBusinessId: ' . $e->getMessage());
         }

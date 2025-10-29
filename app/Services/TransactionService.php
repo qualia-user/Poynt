@@ -61,7 +61,18 @@ class TransactionService
                 return false;
             }
 
-            return $data['transactions'];
+            $transactions = $data['transactions'];
+
+            $this->context->getLog()->info(
+                'TransactionService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'transactions',
+                    'payload' => $transactions,
+                ]
+            );
+
+            return $transactions;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 sprintf('TransactionService::fetchByBusinessId: %s', $e->getMessage())

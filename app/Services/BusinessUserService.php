@@ -140,6 +140,17 @@ class BusinessUserService
             ]);
 
             $data = json_decode($response->getBody(), true);
+            if (is_array($data)) {
+                $this->context->getLog()->info(
+                    'BusinessUserService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'businessUsers',
+                        'payload' => $data,
+                    ]
+                );
+            }
+
             return $data ?? false;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(

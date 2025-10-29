@@ -158,6 +158,15 @@ class HookService
                 }
             }
 
+            $this->context->getLog()->info(
+                'HookService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'hooks',
+                    'payload' => $hooks,
+                ]
+            );
+
             return $hooks;
         } catch (BadResponseException $e) {
             $response = $e->getResponse();
@@ -167,6 +176,15 @@ class HookService
                         'HookService::fetchByBusinessId: GET /hooks?businessId=%s returned 404, treating as no hooks',
                         $businessId
                     )
+                );
+
+                $this->context->getLog()->info(
+                    'HookService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'hooks',
+                        'payload' => [],
+                    ]
                 );
 
                 return [];

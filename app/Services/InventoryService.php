@@ -64,6 +64,15 @@ class InventoryService
             $items[] = $row;
         }
 
+        $this->context->getLog()->info(
+            'InventoryService::fetchByBusinessId response',
+            [
+                'businessId' => $businessId,
+                'entity' => 'inventory',
+                'payload' => $items,
+            ]
+        );
+
         return $items ?: false;
     }
 

@@ -552,6 +552,15 @@ class PaylinkService
                 sprintf('PaylinkService::fetchByBusinessId: no stores found for business %s', $businessId)
             );
 
+            $this->context->getLog()->info(
+                'PaylinkService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'paylinks',
+                    'payload' => [],
+                ]
+            );
+
             return [];
         }
 
@@ -570,6 +579,15 @@ class PaylinkService
                 'all' => $this->requestPaylinkCollection($storeId, $accessToken, 'all'),
             ];
         }
+
+        $this->context->getLog()->info(
+            'PaylinkService::fetchByBusinessId response',
+            [
+                'businessId' => $businessId,
+                'entity' => 'paylinks',
+                'payload' => $results,
+            ]
+        );
 
         return $results;
     }
