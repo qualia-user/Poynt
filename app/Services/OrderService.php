@@ -73,19 +73,19 @@ class OrderService
      */
     public function upsert(array $orderData): bool
     {
-        $orderId = $orderData['id'] ?? null;
         $businessId = $this->coalesceValue($orderData, [
             ['businessId'],
             ['context', 'businessId'],
         ]);
 
-        if (!$orderId || !$businessId) {
+        if (!isset($orderData['id']) || $businessId === null) {
             $this->context->getLog()->error(
                 'OrderService::upsert: missing required order fields (id or businessId)'
             );
             return false;
         }
 
+        $orderId = $orderData['id'];
         $storeId = $this->coalesceValue($orderData, [
             ['storeId'],
             ['context', 'storeId'],
@@ -150,10 +150,7 @@ class OrderService
         ]);
 
         $customerUserId = Format::optionalInt($orderData['customerUserId'] ?? $orderData['customer']['userId'] ?? null);
-        $employeeUserId = Format::optionalInt($this->coalesceValue($orderData, [
-            ['employeeUserId'],
-            ['context', 'employeeUserId'],
-        ]));
+        $employeeUserId = Format::optionalInt($orderData['employeeUserId'] ?? $orderData['context']['employeeUserId'] ?? null);
         $storeDeviceId = $this->coalesceValue($orderData, [
             ['storeDeviceId'],
             ['deviceId'],
