@@ -739,6 +739,17 @@ class SubscriptionService
 
         $subscriptions = $this->fetchSubscriptions($appToken, $businessId);
 
+        if (is_array($subscriptions)) {
+            $this->context->getLog()->info(
+                'SubscriptionService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'subscriptions',
+                    'payload' => $subscriptions,
+                ]
+            );
+        }
+
         return $subscriptions ?: false;
     }
 

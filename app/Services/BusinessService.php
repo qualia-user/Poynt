@@ -153,7 +153,18 @@ class BusinessService {
             return false;
         }
 
-        return [$business];
+        $payload = [$business];
+
+        $this->context->getLog()->info(
+            'BusinessService::fetchByBusinessId response',
+            [
+                'businessId' => $businessId,
+                'entity' => 'businesses',
+                'payload' => $payload,
+            ]
+        );
+
+        return $payload;
     }
 
     /**

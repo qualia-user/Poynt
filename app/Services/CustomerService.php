@@ -134,6 +134,17 @@ class CustomerService
             ]);
 
             $data = json_decode($response->getBody(), true);
+            if (is_array($data)) {
+                $this->context->getLog()->info(
+                    'CustomerService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'customers',
+                        'payload' => $data,
+                    ]
+                );
+            }
+
             return $data ?? false;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(

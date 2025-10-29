@@ -55,6 +55,15 @@ class StoreService
 
             $data = json_decode($response->getBody(), true);
             if (is_array($data)) {
+                $this->context->getLog()->info(
+                    'StoreService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'stores',
+                        'payload' => $data,
+                    ]
+                );
+
                 return $data;
             }
         } catch (GuzzleException $e) {

@@ -139,6 +139,15 @@ class CatalogService
                 }
             }
 
+            $this->context->getLog()->info(
+                'CatalogService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'catalogs',
+                    'payload' => $catalogs,
+                ]
+            );
+
             return $catalogs;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(

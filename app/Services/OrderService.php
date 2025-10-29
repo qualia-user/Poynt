@@ -53,10 +53,34 @@ class OrderService
 
             $data = json_decode($response->getBody(), true);
             if (isset($data['orders']) && is_array($data['orders'])) {
-                return $data['orders'];
+                $payload = $data['orders'];
+
+                $this->context->getLog()->info(
+                    'OrderService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'orders',
+                        'payload' => $payload,
+                    ]
+                );
+
+                return $payload;
             }
 
-            return is_array($data) ? $data : false;
+            if (is_array($data)) {
+                $this->context->getLog()->info(
+                    'OrderService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'orders',
+                        'payload' => $data,
+                    ]
+                );
+
+                return $data;
+            }
+
+            return false;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 sprintf('OrderService::fetchByBusinessId: %s', $e->getMessage())
