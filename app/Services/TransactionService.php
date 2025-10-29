@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
@@ -63,7 +64,8 @@ class TransactionService
 
             $transactions = $data['transactions'];
 
-            $this->context->getLog()->info(
+            FetchResponseLogger::info(
+                $this->context->getLog(),
                 'TransactionService::fetchByBusinessId response',
                 [
                     'businessId' => $businessId,

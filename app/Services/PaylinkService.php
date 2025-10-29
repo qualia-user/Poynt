@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\BadResponseException;
@@ -552,7 +553,8 @@ class PaylinkService
                 sprintf('PaylinkService::fetchByBusinessId: no stores found for business %s', $businessId)
             );
 
-            $this->context->getLog()->info(
+            FetchResponseLogger::info(
+                $this->context->getLog(),
                 'PaylinkService::fetchByBusinessId response',
                 [
                     'businessId' => $businessId,
@@ -580,7 +582,8 @@ class PaylinkService
             ];
         }
 
-        $this->context->getLog()->info(
+        FetchResponseLogger::info(
+            $this->context->getLog(),
             'PaylinkService::fetchByBusinessId response',
             [
                 'businessId' => $businessId,

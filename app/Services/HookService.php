@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\BadResponseException;
@@ -158,7 +159,8 @@ class HookService
                 }
             }
 
-            $this->context->getLog()->info(
+            FetchResponseLogger::info(
+                $this->context->getLog(),
                 'HookService::fetchByBusinessId response',
                 [
                     'businessId' => $businessId,
@@ -178,7 +180,8 @@ class HookService
                     )
                 );
 
-                $this->context->getLog()->info(
+                FetchResponseLogger::info(
+                    $this->context->getLog(),
                     'HookService::fetchByBusinessId response',
                     [
                         'businessId' => $businessId,

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -52,7 +53,8 @@ class CategoryService
             $categories = $this->collectCategories($businessId, $accessToken, $catalogs);
             $payload = array_values($categories);
 
-            $this->context->getLog()->info(
+            FetchResponseLogger::info(
+                $this->context->getLog(),
                 'CategoryService::fetchByBusinessId response',
                 [
                     'businessId' => $businessId,

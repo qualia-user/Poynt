@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Config\ConfigApp;
 use App\Core\Context;
 use App\Core\Response;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use DateInterval;
 //use DateMalformedIntervalStringException;
@@ -740,7 +741,8 @@ class SubscriptionService
         $subscriptions = $this->fetchSubscriptions($appToken, $businessId);
 
         if (is_array($subscriptions)) {
-            $this->context->getLog()->info(
+            FetchResponseLogger::info(
+                $this->context->getLog(),
                 'SubscriptionService::fetchByBusinessId response',
                 [
                     'businessId' => $businessId,
