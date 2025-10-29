@@ -120,26 +120,64 @@ class InventoryService
     {
         $items = [];
 
-        foreach ($storeIds as $storeId) {
-            try {
-                $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/inventory/variants', [
-                    'headers' => [
-                        'Authorization' => 'Bearer ' . $accessToken,
-                    ],
-                    'query' => [
-                        'storeId' => $storeId,
-                    ],
-                ]);
+        if (empty($storeIds)) {
+            return $items;
+        }
 
-                $payload = json_decode($response->getBody(), true);
-                foreach ($this->normalizeVariantPayload($payload) as $row) {
-                    $row['storeId'] = $storeId;
-                    $items[] = $row;
-                }
-            } catch (GuzzleException $e) {
-                $this->context->getLog()->error(
-                    sprintf('InventoryService::fetchVariantRows: failed for store %s: %s', $storeId, $e->getMessage())
+        $variants = $this->getVariantIdentifiers($businessId);
+        if (empty($variants)) {
+            return $items;
+        }
+
+        foreach ($variants as $variant) {
+            $productId = $variant['product_id'] ?? null;
+            $variantId = $variant['variant_id'] ?? null;
+            $sku = $variant['sku'] ?? null;
+
+            if (!$productId || !$variantId) {
+                continue;
+            }
+
+            $variantPath = rawurlencode($sku ?: $variantId);
+
+            foreach ($storeIds as $storeId) {
+                $url = sprintf(
+                    '%s/%s/products/%s/variants/%s/inventory/%s',
+                    self::POYNT_ENDPOINT,
+                    $businessId,
+                    $productId,
+                    $variantPath,
+                    $storeId
                 );
+
+                try {
+                    $response = $this->httpClient->get($url, [
+                        'headers' => [
+                            'Authorization' => 'Bearer ' . $accessToken,
+                        ],
+                    ]);
+
+                    $payload = json_decode($response->getBody(), true);
+                    foreach ($this->normalizeVariantPayload($payload) as $row) {
+                        $row['storeId'] = $storeId;
+                        $row['productId'] = $row['productId'] ?? $productId;
+                        $row['variantId'] = $row['variantId'] ?? $variantId;
+                        if ($sku && !isset($row['sku'])) {
+                            $row['sku'] = $sku;
+                        }
+                        $items[] = $row;
+                    }
+                } catch (GuzzleException $e) {
+                    $this->context->getLog()->error(
+                        sprintf(
+                            'InventoryService::fetchVariantRows: failed for store %s, product %s, variant %s: %s',
+                            $storeId,
+                            $productId,
+                            $variantId,
+                            $e->getMessage()
+                        )
+                    );
+                }
             }
         }
 
@@ -227,7 +265,33 @@ class InventoryService
             }
         }
 
-        return $rows;
+        if (!empty($rows)) {
+            return $rows;
+        }
+
+        return [$payload];
+    }
+
+    private function getVariantIdentifiers(string $businessId): array
+    {
+        try {
+            $sql = 'SELECT pv.product_id, pv.variant_id, pv.sku '
+                . 'FROM product_variant pv '
+                . 'INNER JOIN product p ON p.product_id = pv.product_id '
+                . 'WHERE p.business_id = ?';
+
+            $rows = $this->context->getConn()->fetchAllAssociative($sql, [$businessId]);
+
+            if (is_array($rows) && !empty($rows)) {
+                return $rows;
+            }
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                'InventoryService::getVariantIdentifiers: ' . $e->getMessage()
+            );
+        }
+
+        return [];
     }
 
     private function getStoreIds(string $businessId): array
