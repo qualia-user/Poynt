@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\BadResponseException;
@@ -158,6 +159,16 @@ class HookService
                 }
             }
 
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'HookService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'hooks',
+                    'payload' => $hooks,
+                ]
+            );
+
             return $hooks;
         } catch (BadResponseException $e) {
             $response = $e->getResponse();
@@ -167,6 +178,16 @@ class HookService
                         'HookService::fetchByBusinessId: GET /hooks?businessId=%s returned 404, treating as no hooks',
                         $businessId
                     )
+                );
+
+                FetchResponseLogger::info(
+                    $this->context->getLog(),
+                    'HookService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'hooks',
+                        'payload' => [],
+                    ]
                 );
 
                 return [];

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -63,6 +64,16 @@ class InventoryService
             $row['__resourceType'] = 'variant';
             $items[] = $row;
         }
+
+        FetchResponseLogger::info(
+            $this->context->getLog(),
+            'InventoryService::fetchByBusinessId response',
+            [
+                'businessId' => $businessId,
+                'entity' => 'inventory',
+                'payload' => $items,
+            ]
+        );
 
         return $items ?: false;
     }

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -53,10 +54,36 @@ class OrderService
 
             $data = json_decode($response->getBody(), true);
             if (isset($data['orders']) && is_array($data['orders'])) {
-                return $data['orders'];
+                $payload = $data['orders'];
+
+                FetchResponseLogger::info(
+                    $this->context->getLog(),
+                    'OrderService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'orders',
+                        'payload' => $payload,
+                    ]
+                );
+
+                return $payload;
             }
 
-            return is_array($data) ? $data : false;
+            if (is_array($data)) {
+                FetchResponseLogger::info(
+                    $this->context->getLog(),
+                    'OrderService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'orders',
+                        'payload' => $data,
+                    ]
+                );
+
+                return $data;
+            }
+
+            return false;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 sprintf('OrderService::fetchByBusinessId: %s', $e->getMessage())

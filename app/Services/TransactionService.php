@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
@@ -61,7 +62,19 @@ class TransactionService
                 return false;
             }
 
-            return $data['transactions'];
+            $transactions = $data['transactions'];
+
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'TransactionService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'transactions',
+                    'payload' => $transactions,
+                ]
+            );
+
+            return $transactions;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 sprintf('TransactionService::fetchByBusinessId: %s', $e->getMessage())

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -153,7 +154,19 @@ class BusinessService {
             return false;
         }
 
-        return [$business];
+        $payload = [$business];
+
+        FetchResponseLogger::info(
+            $this->context->getLog(),
+            'BusinessService::fetchByBusinessId response',
+            [
+                'businessId' => $businessId,
+                'entity' => 'businesses',
+                'payload' => $payload,
+            ]
+        );
+
+        return $payload;
     }
 
     /**
