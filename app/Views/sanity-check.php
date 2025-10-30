@@ -9,7 +9,7 @@ $escape = static function (mixed $value): string {
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 };
 
-$formatValue = static function (mixed $value) use ($escape): string {
+$formatValue = static function (mixed $value) use (&$formatValue, $escape): string {
     if ($value === null) {
         return '<span class="muted">null</span>';
     }
