@@ -53,7 +53,12 @@ class InventoryService
         $summaryProductIds = [];
 
         foreach ($summaryRows as $row) {
-            $row['businessId'] = $row['businessId'] ?? $businessId;
+            [$resolvedBusinessId, $resolvedProductId] = $this->extractSummaryIdentifiers($row);
+
+            $row['businessId'] = $resolvedBusinessId ?? $businessId;
+            if ($resolvedProductId !== null) {
+                $row['productId'] = $resolvedProductId;
+            }
             $row['__resourceType'] = 'summary';
             $items[] = $row;
 
@@ -517,15 +522,29 @@ class InventoryService
 
     private function upsertSummary(array $summaryData): bool
     {
-        if (!isset($summaryData['businessId'], $summaryData['productId'])) {
-            $this->context->getLog()->error(
-                'InventoryService::upsertSummary: missing required fields (businessId, productId)'
-            );
-            return false;
+        [$businessId, $productId] = $this->extractSummaryIdentifiers($summaryData);
+
+        if ($businessId !== null) {
+            $summaryData['businessId'] = $businessId;
         }
 
-        $businessId = $summaryData['businessId'];
-        $productId = $summaryData['productId'];
+        if ($productId !== null) {
+            $summaryData['productId'] = $productId;
+        }
+
+        if ($businessId === null || $productId === null) {
+            $this->context->getLog()->warning(
+                'InventoryService::upsertSummary: skipping summary missing identifiers',
+                [
+                    'businessId' => $businessId,
+                    'productId' => $productId,
+                    'keys' => array_keys($summaryData),
+                ]
+            );
+
+            return true;
+        }
+
         $totalOnHand = Format::optionalNumericString($summaryData['totalOnHand'] ?? $summaryData['quantityOnHand'] ?? null);
         $totalReserved = Format::optionalNumericString($summaryData['totalReserved'] ?? $summaryData['quantityReserved'] ?? null);
         $updatedAtExt = Format::optionalTimestamp($summaryData['updatedAt'] ?? null);
@@ -550,7 +569,7 @@ class InventoryService
                     'businessId'   => $businessId,
                     'productId'    => $productId,
                     'totalOnHand'  => $totalOnHand,
-                    'totalReserved'=> $totalReserved,
+                    'totalReserved' => $totalReserved,
                     'updatedAtExt' => $updatedAtExt,
                     'payload'      => $payload,
                     'createdAt'    => $now,
@@ -633,5 +652,81 @@ class InventoryService
             );
             return false;
         }
+    }
+
+    /**
+     * Attempt to derive the identifiers required to persist an inventory summary row.
+     */
+    private function extractSummaryIdentifiers(array $summaryData): array
+    {
+        $businessId = $summaryData['businessId'] ?? null;
+        if ($businessId === null && isset($summaryData['business']) && is_array($summaryData['business'])) {
+            $businessCandidates = [
+                $summaryData['business']['id'] ?? null,
+                $summaryData['business']['businessId'] ?? null,
+                $summaryData['business']['businessUuid'] ?? null,
+            ];
+
+            foreach ($businessCandidates as $candidate) {
+                if (is_scalar($candidate)) {
+                    $candidate = (string) $candidate;
+                    if ($candidate !== '') {
+                        $businessId = $candidate;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if (is_scalar($businessId)) {
+            $businessId = (string) $businessId;
+            if ($businessId === '') {
+                $businessId = null;
+            }
+        } else {
+            $businessId = null;
+        }
+
+        $productId = $summaryData['productId'] ?? null;
+        if ($productId === null) {
+            $productCandidates = [];
+
+            if (isset($summaryData['product']) && is_array($summaryData['product'])) {
+                $productCandidates[] = $summaryData['product']['id'] ?? null;
+                $productCandidates[] = $summaryData['product']['productId'] ?? null;
+                $productCandidates[] = $summaryData['product']['uuid'] ?? null;
+                $productCandidates[] = $summaryData['product']['productUuid'] ?? null;
+            }
+
+            $productCandidates[] = $summaryData['productUuid'] ?? null;
+            $productCandidates[] = $summaryData['productUUID'] ?? null;
+            $productCandidates[] = $summaryData['itemId'] ?? null;
+            $productCandidates[] = $summaryData['catalogItemId'] ?? null;
+
+            foreach ($productCandidates as $candidate) {
+                if (is_scalar($candidate)) {
+                    $candidate = (string) $candidate;
+                    if ($candidate !== '') {
+                        $productId = $candidate;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (is_scalar($productId)) {
+            $productId = (string) $productId;
+            if ($productId === '') {
+                $productId = null;
+            }
+        } else {
+            $productId = null;
+        }
+
+        return [$businessId, $productId];
     }
 }
