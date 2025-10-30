@@ -9,13 +9,16 @@ When a merchant install fails part-way through onboarding you can purge the loca
 
 ## CLI recovery walkthrough
 
+Follow these steps end-to-end to purge a broken install and immediately trigger the initial gather again.
+
 1. **Purge the existing installation footprint**
 
    ```bash
    php scripts/purge_business.php --business=<BUSINESS_ID>
    ```
 
-   Add `--drop-tokens` if you also need to remove stored OAuth credentials.
+   * Add `--drop-tokens` if the OAuth credentials for the business should be removed as well.
+   * The command prints a short status message to STDOUT and exits with `0` on success.
 
 2. **Re-run the onboarding gather for targeted resources**
 
@@ -24,6 +27,14 @@ When a merchant install fails part-way through onboarding you can purge the loca
    ```
 
    * `--resources` accepts a comma-separated list of resource keys (e.g. `business`, `store`, `subscription`).
+   * The script emits a JSON summary showing which resources matched, their outcome (`success`, `skipped`, or `failed`), and an error string when anything fails.
+   * A non-zero exit code indicates that at least one resource failed. Repeat this step once issues are addressed to reattempt the gather.
+
+3. **Repeat as needed**
+
+   Any time you need to refresh the data, run the gather command again with the same `--business` identifier. You do **not** need to purge again unless you want to wipe all local data first.
+
+4. **Verify logs**
    * The script returns a JSON summary describing which resources were matched and whether their synchronization succeeded. A non-zero exit code indicates that at least one resource failed.
 
 3. **Verify logs**
@@ -36,6 +47,17 @@ The recovery endpoint is available at `/internal/onboarding/resources` and can b
 
 ### Quick browser invocation
 
+1. Purge the business via the CLI command shown above. (A browser endpoint is not exposed for purging because it requires elevated access.)
+
+2. In a browser window, navigate to:
+
+   ```
+   https://<your-host>/internal/onboarding/resources?businessId=<BUSINESS_ID>&resources=business,store
+   ```
+
+   The server responds with a JSON payload summarizing the gather operation, mirroring the CLI output.
+
+3. Reload the page whenever you need to repeat the gather. Update the `resources` query string if you want to target a different subset.
 Navigate to:
 
 ```
@@ -55,6 +77,8 @@ curl -X POST \
         "resources": ["business", "store"]
       }'
 ```
+
+Run the CLI purge first, then use this POST request to gather without needing a browser. Issue the same POST call multiple times to repeat the gather.
 
 The endpoint accepts the following fields:
 
