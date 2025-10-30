@@ -148,31 +148,52 @@ class Api
                 $responseJSON = json_encode($response);
                 self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent with error status '{$status}' and response '{$responseJSON}'.", self::getLogContext());
             }
+            Response::$contentType = null;
             exit;
-        } else {
-            $return = !$returnRaw ? json_encode(new Response($response)) : json_encode($response);
+        }
 
-            self::$lastResponse = [
-                'status' => $status,
-                'response' => $response,
-                'raw' => $return,
-            ];
-
+        if (isset(Response::$contentType) && Response::$contentType !== null) {
+            header("Content-Type: " . Response::$contentType);
+            if (isset($response)) {
+                echo (string) $response;
+            }
+            if ($status == Response::STATUS_OK) {
+                self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent. Max Memory: " . memory_get_peak_usage(), self::getLogContext());
+            } else {
+                $responseJSON = json_encode($response);
+                self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent with error status '{$status}' and response '{$responseJSON}'.", self::getLogContext());
+            }
+            Response::$contentType = null;
             if ($exit && !self::$exitDisabled) {
-                if (isset($response)) {
-                    echo $return;
-                }
-                if ($status == Response::STATUS_OK) {
-                    self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent. Max Memory: " . memory_get_peak_usage(), self::getLogContext());
-                } else {
-                    $responseJSON = json_encode($response);
-                    self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent with error status '{$status}' and response '{$responseJSON}'.", self::getLogContext());
-                }
                 exit;
             }
-
-            return $return;
+            return (string) $response;
         }
+
+        $return = !$returnRaw ? json_encode(new Response($response)) : json_encode($response);
+
+        self::$lastResponse = [
+            'status' => $status,
+            'response' => $response,
+            'raw' => $return,
+        ];
+
+        if ($exit && !self::$exitDisabled) {
+            if (isset($response)) {
+                echo $return;
+            }
+            if ($status == Response::STATUS_OK) {
+                self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent. Max Memory: " . memory_get_peak_usage(), self::getLogContext());
+            } else {
+                $responseJSON = json_encode($response);
+                self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent with error status '{$status}' and response '{$responseJSON}'.", self::getLogContext());
+            }
+            Response::$contentType = null;
+            exit;
+        }
+
+        Response::$contentType = null;
+        return $return;
     }
 
     public static function disableExit(): void
@@ -273,6 +294,9 @@ class Api
         // Subscription routes
         $router->get('/subscriptions/status', ['App\Controllers\SubscriptionController', 'status']);
         $router->post('/subscriptions/start-trial', ['App\Controllers\SubscriptionController', 'startTrial']);
+
+        // Developer utilities
+        $router->get('/sanity-check', ['App\Controllers\SanityCheckController', 'index']);
 
         return $router->getData();
     }
