@@ -100,7 +100,7 @@ class SanityCheckController extends Controller
             foreach ($storeOnlyTables as $table) {
                 $quotedTable = $this->conn->quoteIdentifier($table);
                 $rows = $this->conn->fetchAllAssociative(
-                    sprintf('SELECT * FROM %s WHERE store_id IN (?)', $quotedTable),
+                    sprintf('SELECT * FROM %s WHERE store_id IN (:store_ids)', $quotedTable),
                     ['store_ids' => $storeIds],
                     ['store_ids' => ArrayParameterType::STRING]
                 );
@@ -139,7 +139,7 @@ class SanityCheckController extends Controller
         foreach (self::ORDER_RELATED_TABLES as $table => $keyColumn) {
             $quotedTable = $this->conn->quoteIdentifier($table);
             $rows = $this->conn->fetchAllAssociative(
-                sprintf('SELECT * FROM %s WHERE %s IN (?)', $quotedTable, $this->conn->quoteIdentifier($keyColumn)),
+                sprintf('SELECT * FROM %s WHERE %s IN (:ids)', $quotedTable, $this->conn->quoteIdentifier($keyColumn)),
                 ['ids' => $orderIds],
                 ['ids' => ArrayParameterType::STRING]
             );
@@ -167,7 +167,7 @@ class SanityCheckController extends Controller
         }
 
         $rows = $this->conn->fetchAllAssociative(
-            'SELECT * FROM transaction_receipt WHERE transaction_id IN (?)',
+            'SELECT * FROM transaction_receipt WHERE transaction_id IN (:ids)',
             ['ids' => $transactionIds],
             ['ids' => ArrayParameterType::STRING]
         );
