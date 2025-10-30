@@ -291,6 +291,8 @@ class Api
 
         // Internal route to trigger token refreshes
         $router->post('/internal/refresh-tokens', ['App\Controllers\TokenController', 'refreshTokens']);
+        $router->post('/internal/onboarding/resources', ['App\Controllers\OnboardingController', 'gather']);
+        $router->get('/internal/onboarding/resources', ['App\Controllers\OnboardingController', 'gather']);
         // Subscription routes
         $router->get('/subscriptions/status', ['App\Controllers\SubscriptionController', 'status']);
         $router->post('/subscriptions/start-trial', ['App\Controllers\SubscriptionController', 'startTrial']);
