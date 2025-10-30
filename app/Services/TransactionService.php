@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Core\Context;
 use App\Services\Support\FetchResponseLogger;
+use App\Services\Support\PaginatedRequest;
 use App\Services\Support\PoyntDataFormatter as Format;
 use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
@@ -51,17 +52,20 @@ class TransactionService
 
         try {
             $url = self::POYNT_ENDPOINT . '/' . $businessId . '/transactions';
-            $response = $this->httpClient->get($url, [
+            $requestOptions = [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],
-            ]);
+            ];
+
+            $response = $this->httpClient->get($url, $requestOptions);
 
             $data = json_decode($response->getBody(), true);
             if (!is_array($data) || !isset($data['transactions']) || !is_array($data['transactions'])) {
                 return false;
             }
 
+            $data = PaginatedRequest::collect($this->httpClient, $data, $url, $requestOptions, 'transactions');
             $transactions = $data['transactions'];
 
             FetchResponseLogger::info(
