@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Core\Context;
 use App\Services\Support\FetchResponseLogger;
+use App\Services\Support\PaginatedRequest;
 use App\Services\Support\PoyntDataFormatter as Format;
 use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
@@ -47,13 +48,22 @@ class OrderService
         }
 
         try {
-            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/orders', [
+            $url = self::POYNT_ENDPOINT . '/' . $businessId . '/orders';
+            $requestOptions = [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],
-            ]);
+            ];
+
+            $response = $this->httpClient->get($url, $requestOptions);
 
             $data = json_decode($response->getBody(), true);
+            if (!is_array($data)) {
+                return false;
+            }
+
+            $data = PaginatedRequest::collect($this->httpClient, $data, $url, $requestOptions, 'orders');
+
             if (isset($data['orders']) && is_array($data['orders'])) {
                 $payload = $data['orders'];
 
@@ -70,21 +80,17 @@ class OrderService
                 return $payload;
             }
 
-            if (is_array($data)) {
-                FetchResponseLogger::info(
-                    $this->context->getLog(),
-                    'OrderService::fetchByBusinessId response',
-                    [
-                        'businessId' => $businessId,
-                        'entity' => 'orders',
-                        'payload' => $data,
-                    ]
-                );
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'OrderService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'orders',
+                    'payload' => $data,
+                ]
+            );
 
-                return $data;
-            }
-
-            return false;
+            return $data;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 sprintf('OrderService::fetchByBusinessId: %s', $e->getMessage())
