@@ -218,6 +218,8 @@ CREATE TABLE order_item (
   raw_payload      JSONB NOT NULL DEFAULT '{}',
   created_at_ext   TIMESTAMPTZ,
   updated_at_ext   TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (order_id, order_item_id)
 );
 CREATE INDEX idx_order_item_product ON order_item(product_id);
