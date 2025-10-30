@@ -43,16 +43,23 @@ class TerminalService
             $stmt = $this->context->getConn()->prepare($sql);
             $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
-            foreach ($devices as $device) {
-                if (!isset($device['deviceId'])) {
-                    $this->context->getLog()->error(
-                        'TerminalService::upsertTerminals: missing device id'
+            foreach ($devices as $index => $device) {
+                $terminalId = $device['deviceId']
+                    ?? $device['externalTerminalId']
+                    ?? null;
+
+                if ($terminalId === null || $terminalId === '') {
+                    $this->context->getLog()->warning(
+                        sprintf(
+                            'TerminalService::upsertTerminals: missing device identifier at index %d for store %s',
+                            $index,
+                            $storeId
+                        )
                     );
-                    return false;
+                    continue;
                 }
 
-                $terminalId = $device['deviceId'];
-                $metadata   = Format::jsonObject($device);
+                $metadata = Format::jsonObject($device);
 
                 $affected = $stmt->executeStatement([
                     'terminalId' => $terminalId,
