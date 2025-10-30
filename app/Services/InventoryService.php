@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Core\Context;
 use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
+use DateTimeImmutable;
+use DateTimeZone;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -47,13 +49,25 @@ class InventoryService
         $storeIds = $this->getStoreIds($businessId);
         $items = [];
 
-        foreach ($this->fetchSummaryRows($businessId, $accessToken) as $row) {
+        $summaryRows = $this->fetchSummaryRows($businessId, $accessToken);
+        $summaryProductIds = [];
+
+        foreach ($summaryRows as $row) {
             $row['businessId'] = $row['businessId'] ?? $businessId;
             $row['__resourceType'] = 'summary';
             $items[] = $row;
+
+            if (isset($row['productId']) && $row['productId'] !== null && $row['productId'] !== '') {
+                $summaryProductIds[] = (string) $row['productId'];
+            }
         }
 
-        foreach ($this->fetchInventoryRows($businessId, $accessToken, $storeIds) as $row) {
+        $productIds = array_values(array_unique($summaryProductIds));
+        if (empty($productIds)) {
+            $productIds = $this->getProductIds($businessId);
+        }
+
+        foreach ($this->fetchInventoryRows($businessId, $accessToken, $storeIds, $productIds) as $row) {
             $row['businessId'] = $businessId;
             $row['__resourceType'] = 'inventory';
             $items[] = $row;
@@ -78,30 +92,53 @@ class InventoryService
         return $items ?: false;
     }
 
-    private function fetchInventoryRows(string $businessId, string $accessToken, array $storeIds): array
+    private function fetchInventoryRows(string $businessId, string $accessToken, array $storeIds, array $productIds): array
     {
         $items = [];
 
-        foreach ($storeIds as $storeId) {
-            try {
-                $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/inventory', [
-                    'headers' => [
-                        'Authorization' => 'Bearer ' . $accessToken,
-                    ],
-                    'query' => [
-                        'storeId' => $storeId,
-                    ],
-                ]);
+        if (empty($storeIds) || empty($productIds)) {
+            return $items;
+        }
 
-                $payload = json_decode($response->getBody(), true);
-                foreach ($this->normalizeInventoryPayload($payload) as $row) {
-                    $row['storeId'] = $storeId;
-                    $items[] = $row;
+        foreach ($storeIds as $storeId) {
+            foreach ($productIds as $productId) {
+                if (!$productId) {
+                    continue;
                 }
-            } catch (GuzzleException $e) {
-                $this->context->getLog()->error(
-                    sprintf('InventoryService::fetchInventoryRows: failed for store %s: %s', $storeId, $e->getMessage())
+
+                $url = sprintf(
+                    '%s/%s/products/%s/inventory/%s',
+                    self::POYNT_ENDPOINT,
+                    $businessId,
+                    rawurlencode((string) $productId),
+                    rawurlencode((string) $storeId)
                 );
+
+                try {
+                    $response = $this->httpClient->get($url, [
+                        'headers' => [
+                            'Authorization' => 'Bearer ' . $accessToken,
+                        ],
+                    ]);
+
+                    $payload = json_decode($response->getBody(), true);
+                    foreach ($this->normalizeInventoryPayload($payload) as $row) {
+                        $row['storeId'] = $storeId;
+                        if (!isset($row['productId'])) {
+                            $row['productId'] = $productId;
+                        }
+                        $items[] = $row;
+                    }
+                } catch (GuzzleException $e) {
+                    $this->context->getLog()->error(
+                        sprintf(
+                            'InventoryService::fetchInventoryRows: failed for store %s, product %s: %s',
+                            $storeId,
+                            $productId,
+                            $e->getMessage()
+                        )
+                    );
+                }
             }
         }
 
@@ -111,11 +148,22 @@ class InventoryService
     private function fetchSummaryRows(string $businessId, string $accessToken): array
     {
         try {
-            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/inventory/summary', [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $accessToken,
-                ],
+            $headers = [
+                'Authorization' => 'Bearer ' . $accessToken,
+            ];
+
+            $ifModifiedSince = $this->getSummaryIfModifiedSinceHeader($businessId);
+            if ($ifModifiedSince !== null) {
+                $headers['If-Modified-Since'] = $ifModifiedSince;
+            }
+
+            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/inventory', [
+                'headers' => $headers,
             ]);
+
+            if ($response->getStatusCode() === 304) {
+                return [];
+            }
 
             $payload = json_decode($response->getBody(), true);
             return $this->normalizeSummaryPayload($payload);
@@ -303,6 +351,58 @@ class InventoryService
         }
 
         return [];
+    }
+
+    private function getProductIds(string $businessId): array
+    {
+        try {
+            $rows = $this->context->getConn()->fetchFirstColumn(
+                'SELECT product_id FROM product WHERE business_id = ?',
+                [$businessId]
+            );
+
+            if (is_array($rows) && !empty($rows)) {
+                return array_values(
+                    array_filter(
+                        array_map(static fn ($value) => (string) $value, $rows),
+                        static fn ($value) => $value !== ''
+                    )
+                );
+            }
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                'InventoryService::getProductIds: ' . $e->getMessage()
+            );
+        }
+
+        return [];
+    }
+
+    private function getSummaryIfModifiedSinceHeader(string $businessId): ?string
+    {
+        try {
+            $value = $this->context->getConn()->fetchOne(
+                'SELECT MAX(updated_at_ext) FROM inventory_summary WHERE business_id = ? AND updated_at_ext IS NOT NULL',
+                [$businessId]
+            );
+
+            if ($value) {
+                try {
+                    $date = new DateTimeImmutable((string) $value);
+                    return $date->setTimezone(new DateTimeZone('UTC'))->format('D, d M Y H:i:s \G\M\T');
+                } catch (\Exception $e) {
+                    $this->context->getLog()->warning(
+                        'InventoryService::getSummaryIfModifiedSinceHeader: unable to parse timestamp: ' . $e->getMessage()
+                    );
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                'InventoryService::getSummaryIfModifiedSinceHeader: ' . $e->getMessage()
+            );
+        }
+
+        return null;
     }
 
     private function getStoreIds(string $businessId): array
