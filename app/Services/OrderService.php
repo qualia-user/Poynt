@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Core\Context;
 use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
+use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -211,6 +212,47 @@ class OrderService
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
+            $params = [
+                'orderId' => $orderId,
+                'businessId' => $businessId,
+                'storeId' => $storeId,
+                'currency' => $currency,
+                'status' => $status,
+                'fulfillmentStatus' => $fulfillmentStatus,
+                'transactionStatusSummary' => $transactionStatusSummary,
+                'subtotalMinor' => $subtotalMinor,
+                'discountTotalMinor' => $discountMinor,
+                'taxTotalMinor' => $taxTotalMinor,
+                'tipTotalMinor' => $tipTotalMinor,
+                'feeTotalMinor' => $feeTotalMinor,
+                'shippingTotalMinor' => $shippingTotalMinor,
+                'netTotalMinor' => $netTotalMinor,
+                'taxExempted' => $taxExempted,
+                'valid' => $valid,
+                'accepted' => $accepted,
+                'notes' => $notes,
+                'customerUserId' => $customerUserId,
+                'employeeUserId' => $employeeUserId,
+                'storeDeviceId' => $storeDeviceId,
+                'source' => $source,
+                'sourceApp' => $sourceApp,
+                'customerJson' => $customerJson,
+                'transactionsJson' => $transactionsJson,
+                'amountsJson' => $amountsJson,
+                'contextJson' => $contextJson,
+                'rawPayload' => $rawPayload,
+                'createdAtExt' => $createdAtExt,
+                'updatedAtExt' => $updatedAtExt,
+                'createdAt' => $now,
+                'updatedAt' => $now,
+            ];
+
+            $types = [
+                'taxExempted' => $taxExempted === null ? ParameterType::NULL : ParameterType::BOOLEAN,
+                'valid' => $valid === null ? ParameterType::NULL : ParameterType::BOOLEAN,
+                'accepted' => $accepted === null ? ParameterType::NULL : ParameterType::BOOLEAN,
+            ];
+
             $this->context->getConn()->executeStatement(
                 'INSERT INTO "order" (
                     order_id, business_id, store_id, currency,
@@ -265,40 +307,8 @@ class OrderService
                     created_at_ext = EXCLUDED.created_at_ext,
                     updated_at_ext = EXCLUDED.updated_at_ext,
                     updated_at = EXCLUDED.updated_at',
-                [
-                    'orderId' => $orderId,
-                    'businessId' => $businessId,
-                    'storeId' => $storeId,
-                    'currency' => $currency,
-                    'status' => $status,
-                    'fulfillmentStatus' => $fulfillmentStatus,
-                    'transactionStatusSummary' => $transactionStatusSummary,
-                    'subtotalMinor' => $subtotalMinor,
-                    'discountTotalMinor' => $discountMinor,
-                    'taxTotalMinor' => $taxTotalMinor,
-                    'tipTotalMinor' => $tipTotalMinor,
-                    'feeTotalMinor' => $feeTotalMinor,
-                    'shippingTotalMinor' => $shippingTotalMinor,
-                    'netTotalMinor' => $netTotalMinor,
-                    'taxExempted' => $taxExempted,
-                    'valid' => $valid,
-                    'accepted' => $accepted,
-                    'notes' => $notes,
-                    'customerUserId' => $customerUserId,
-                    'employeeUserId' => $employeeUserId,
-                    'storeDeviceId' => $storeDeviceId,
-                    'source' => $source,
-                    'sourceApp' => $sourceApp,
-                    'customerJson' => $customerJson,
-                    'transactionsJson' => $transactionsJson,
-                    'amountsJson' => $amountsJson,
-                    'contextJson' => $contextJson,
-                    'rawPayload' => $rawPayload,
-                    'createdAtExt' => $createdAtExt,
-                    'updatedAtExt' => $updatedAtExt,
-                    'createdAt' => $now,
-                    'updatedAt' => $now,
-                ]
+                $params,
+                $types
             );
 
             $this->upsertItems($orderId, $orderData['items'] ?? []);
