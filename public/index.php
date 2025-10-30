@@ -71,6 +71,7 @@ $appContainer->add('App\Controllers\OAuthController')->addArgument('CONTEXT');
 $appContainer->add('App\Controllers\TokenController')->addArgument('CONTEXT');
 $appContainer->add('App\Controllers\WebhooksController')->addArgument('CONTEXT');
 $appContainer->add('App\Controllers\SubscriptionController')->addArgument('CONTEXT');
+$appContainer->add('App\Controllers\OnboardingController')->addArgument('CONTEXT');
 
 $resolver = new RouterResolver($appContainer);
 
