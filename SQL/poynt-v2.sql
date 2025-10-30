@@ -251,72 +251,67 @@ CREATE TABLE order_shipment (
 -- =========================
 -- Source (GET): /businesses/{businessId}/transactions
 --               /businesses/{businessId}/transactions/{transactionId}
+DROP TABLE IF EXISTS transaction_receipt;
+DROP TABLE IF EXISTS transaction;
+
 CREATE TABLE transaction (
-  transaction_id           VARCHAR(255) PRIMARY KEY,
-  business_id              VARCHAR(255) NOT NULL,
-  store_id                 VARCHAR(255),
-  store_device_id          VARCHAR(255),
-  employee_user_id         BIGINT,
-  signature_required       BOOLEAN,
-  signature_captured       BOOLEAN,
-  pin_captured             BOOLEAN,
-  adjusted                 BOOLEAN,
-  amounts_adjusted         BOOLEAN,
-  auth_only                BOOLEAN,
-  partially_approved       BOOLEAN,
-  action_void              BOOLEAN,
-  voided                   BOOLEAN,
-  settled                  BOOLEAN,
-  reversal_void            BOOLEAN,
-
-  action                   VARCHAR(32),      -- AUTHORIZE/SALE/REFUND/...
-  status                   VARCHAR(32),      -- AUTHORIZED/CAPTURED/VOIDED/...
-  settlement_status        VARCHAR(32),
-  transaction_instruction  VARCHAR(64),
-  source                   VARCHAR(32),
-  source_app               VARCHAR(255),
-  mcc                      VARCHAR(16),
-
-  customer_user_id         BIGINT,
-  customer_language        VARCHAR(16),
-  customer_opted_no_tip    BOOLEAN,
-
-  -- amounts (minor units)
-  txn_amount_minor         BIGINT,
-  order_amount_minor       BIGINT,
-  tip_amount_minor         BIGINT,
-  cashback_amount_minor    BIGINT,
-  currency                 VARCHAR(3),
-  approved_amount_minor    BIGINT,
-
-  -- processor
-  processor                VARCHAR(64),
-  acquirer                 VARCHAR(64),
-  processor_status         VARCHAR(64),
-  processor_code           VARCHAR(32),
-  approval_code            VARCHAR(32),
-  retrieval_ref            VARCHAR(64),
-  batch_id                 VARCHAR(64),
-  processor_transaction_id VARCHAR(255),
-
-  references_json          JSONB NOT NULL DEFAULT '[]',
-  links_json               JSONB NOT NULL DEFAULT '[]',
-  funding_source           JSONB NOT NULL DEFAULT '{}',
-  context_json             JSONB NOT NULL DEFAULT '{}',
-  processor_options        JSONB NOT NULL DEFAULT '{}',
-  processor_response       JSONB NOT NULL DEFAULT '{}',
-  amounts_json             JSONB NOT NULL DEFAULT '{}',
-  raw_payload              JSONB NOT NULL DEFAULT '{}',
-
-  created_at_ext           TIMESTAMPTZ,
-  updated_at_ext           TIMESTAMPTZ,
-  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    transaction_id VARCHAR(255) PRIMARY KEY,
+    business_id VARCHAR(255) NOT NULL,
+    store_id VARCHAR(255),
+    store_device_id VARCHAR(255),
+    employee_user_id BIGINT,
+    signature_required BOOLEAN,
+    signature_captured BOOLEAN,
+    pin_captured BOOLEAN,
+    adjusted BOOLEAN,
+    amounts_adjusted BOOLEAN,
+    auth_only BOOLEAN,
+    partially_approved BOOLEAN,
+    action_void BOOLEAN,
+    voided BOOLEAN,
+    settled BOOLEAN,
+    reversal_void BOOLEAN,
+    action VARCHAR(32),
+    status VARCHAR(32),
+    settlement_status VARCHAR(32),
+    transaction_instruction VARCHAR(64),
+    source VARCHAR(32),
+    source_app VARCHAR(255),
+    mcc VARCHAR(16),
+    customer_user_id BIGINT,
+    customer_language VARCHAR(16),
+    customer_opted_no_tip BOOLEAN,
+    txn_amount_minor BIGINT,
+    order_amount_minor BIGINT,
+    tip_amount_minor BIGINT,
+    cashback_amount_minor BIGINT,
+    currency VARCHAR(3),
+    approved_amount_minor BIGINT,
+    processor VARCHAR(64),
+    acquirer VARCHAR(64),
+    processor_status VARCHAR(64),
+    processor_code VARCHAR(32),
+    approval_code VARCHAR(32),
+    retrieval_ref VARCHAR(64),
+    batch_id VARCHAR(64),
+    processor_transaction_id VARCHAR(255),
+    references_json JSONB NOT NULL DEFAULT '[]',
+    links_json JSONB NOT NULL DEFAULT '[]',
+    funding_source JSONB NOT NULL DEFAULT '{}',
+    context_json JSONB NOT NULL DEFAULT '{}',
+    processor_options JSONB NOT NULL DEFAULT '{}',
+    processor_response JSONB NOT NULL DEFAULT '{}',
+    amounts_json JSONB NOT NULL DEFAULT '{}',
+    raw_payload JSONB NOT NULL DEFAULT '{}',
+    created_at_ext TIMESTAMPTZ,
+    updated_at_ext TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_tx_business_updated ON transaction(business_id, updated_at_ext);
-CREATE INDEX idx_tx_status          ON transaction(status);
-CREATE INDEX idx_tx_action          ON transaction(action);
 
+CREATE INDEX IF NOT EXISTS idx_tx_business_updated ON transaction (business_id, updated_at_ext);
+CREATE INDEX IF NOT EXISTS idx_tx_status ON transaction (status);
+CREATE INDEX IF NOT EXISTS idx_tx_action ON transaction (action);
 -- Source (GET, opcionalno): /businesses/{businessId}/transactions/{transactionId}/receipt
 CREATE TABLE transaction_receipt (
   transaction_id VARCHAR(255) PRIMARY KEY,
@@ -551,16 +546,73 @@ ALTER TABLE tax
 CREATE TABLE paylink (
   paylink_id      VARCHAR(255) PRIMARY KEY,
   business_id     VARCHAR(255) NOT NULL,
+  url             TEXT,
+  vanity_url      TEXT,
   domain          VARCHAR(255),
+  title           TEXT,
+  description     TEXT,
   status          VARCHAR(32),
   amount_minor    BIGINT,
   currency        VARCHAR(3),
   metadata        JSONB NOT NULL DEFAULT '{}',
+  expires_at_ext  TIMESTAMPTZ,
   created_at_ext  TIMESTAMPTZ,
   updated_at_ext  TIMESTAMPTZ,
+  raw_payload     JSONB NOT NULL DEFAULT '{}',
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS paylink_item (
+    paylink_id VARCHAR(255) NOT NULL,
+    business_id VARCHAR(255) NOT NULL,
+    item_ref VARCHAR(64) NOT NULL,
+    item_id VARCHAR(255),
+    name VARCHAR(255),
+    description TEXT,
+    amount_minor BIGINT,
+    currency VARCHAR(3),
+    quantity NUMERIC(18, 3),
+    metadata JSONB NOT NULL DEFAULT '{}',
+    payload JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (paylink_id, item_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_paylink_item_business ON paylink_item (business_id);
+
+CREATE TABLE IF NOT EXISTS paylink_payment (
+    paylink_id VARCHAR(255) NOT NULL,
+    business_id VARCHAR(255) NOT NULL,
+    payment_ref VARCHAR(64) NOT NULL,
+    payment_id VARCHAR(255),
+    status VARCHAR(64),
+    amount_minor BIGINT,
+    currency VARCHAR(3),
+    processed_at_ext TIMESTAMPTZ,
+    payload JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (paylink_id, payment_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_paylink_payment_business ON paylink_payment (business_id);
+
+CREATE TABLE IF NOT EXISTS paylink_link (
+    paylink_id VARCHAR(255) NOT NULL,
+    business_id VARCHAR(255) NOT NULL,
+    link_ref VARCHAR(64) NOT NULL,
+    rel VARCHAR(128),
+    href TEXT,
+    method VARCHAR(16),
+    payload JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (paylink_id, link_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_paylink_link_business ON paylink_link (business_id);
+
 
 -- =========================
 -- HOOKS (konfiguracija) & DELIVERIES (GET strana)
@@ -651,10 +703,14 @@ SELECT * FROM paylink;
 SELECT * FROM hook;
 SELECT * FROM hook_delivery;
 
-SELECT * FROM log ORDER BY id DESC;
+SELECT * FROM log WHERE level not in (100, 200) ORDER BY id DESC LIMIT 100;
+
+SELECT * FROM log WHERE message ilike '%fetchByBusinessId response%' ORDER BY id DESC LIMIT 100
 
 
+  select * from log order by id desc;
 
 
 
 -- https://poynt.secureserver.net/applications/authorize?client_id=urn:aid:2f3dad35-7121-4666-9b95-77aad5a36c50&redirect_uri=https%3A%2F%2F9cfbce9dcf9e.ngrok-free.app%2Fcallback
+
