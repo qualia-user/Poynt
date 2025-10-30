@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Core\Context;
 use DateInterval;
 use DateTime;
+use Throwable;
 
 /**
  * TokenService manages persistence for both app-level tokens (app_token)
@@ -38,6 +39,8 @@ class TokenService {
         string   $businessId,
         array    $token
     ): void {
+        $this->resetFailedTransactionIfNeeded();
+
         if (!($token['expiresIn'] instanceof DateTime)) {
             // $token['expiresIn'] is a number of seconds from now, not an absolute timestamp.
             $expiresAt = new DateTime();
@@ -83,6 +86,8 @@ class TokenService {
      */
     public function getAppToken(string $businessId, bool $array = false): mixed
     {
+        $this->resetFailedTransactionIfNeeded();
+
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
           FROM app_token
@@ -118,6 +123,8 @@ class TokenService {
      */
     public function findExpiringAppTokens(int $minutes = 30): array
     {
+        $this->resetFailedTransactionIfNeeded();
+
         // Safely interpolate $minutes into the INTERVAL clause
         $intervalSql = "NOW() + INTERVAL '{$minutes} minutes'";
 
@@ -155,6 +162,8 @@ class TokenService {
         string $businessId,
         array $token
     ): void {
+        $this->resetFailedTransactionIfNeeded();
+
         if (!($token['expiresIn'] instanceof DateTime)) {
             $expiresAt = new DateTime();
             $expiresAt->add(new DateInterval('PT' . (int)$token['expiresIn'] . 'S'));
@@ -198,6 +207,8 @@ class TokenService {
      */
     public function getMerchantToken(string $businessId, bool $array = false): mixed
     {
+        $this->resetFailedTransactionIfNeeded();
+
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
           FROM merchant_token
@@ -233,6 +244,8 @@ class TokenService {
      */
     public function findExpiringMerchantTokens(int $minutes = 30): array
     {
+        $this->resetFailedTransactionIfNeeded();
+
         $intervalSql = "NOW() + INTERVAL '{$minutes} minutes'";
 
         $sql = <<<SQL
@@ -289,6 +302,8 @@ class TokenService {
      */
     public function logRefreshAttempt(string $businessId, string $type, bool $success, ?string $message = null): void
     {
+        $this->resetFailedTransactionIfNeeded();
+
         $sql = <<<SQL
         INSERT INTO token_refresh_log (business_id, token_type, attempted_at, success, message)
         VALUES (:biz, :type, NOW(), :success, :message)
@@ -305,6 +320,42 @@ class TokenService {
         } catch (\Exception $e) {
             $this->context->getLog()->error(
                 "Failed to log token refresh attempt for business_id={$businessId}: " . $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Roll back the active transaction if it has been left in a failed state.
+     */
+    private function resetFailedTransactionIfNeeded(): void
+    {
+        $conn = $this->context->getConn();
+
+        if (!method_exists($conn, 'isTransactionActive')) {
+            return;
+        }
+
+        try {
+            if (!$conn->isTransactionActive()) {
+                return;
+            }
+
+            if (!method_exists($conn, 'isRollbackOnly')) {
+                return;
+            }
+
+            if (!$conn->isRollbackOnly()) {
+                return;
+            }
+
+            $conn->rollBack();
+            $this->context->getLog()->warning(
+                'TokenService::resetFailedTransactionIfNeeded: rolled back aborted transaction before continuing.'
+            );
+        } catch (Throwable $e) {
+            $this->context->getLog()->warning(
+                'TokenService::resetFailedTransactionIfNeeded: unable to verify/rollback transaction: ' .
+                $e->getMessage()
             );
         }
     }
