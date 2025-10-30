@@ -34,6 +34,14 @@ class PaylinkService
      */
     public function upsert(array $paylinkData): bool
     {
+        if (!isset($paylinkData['id']) && isset($paylinkData['checkoutUrlId'])) {
+            $paylinkData['id'] = $paylinkData['checkoutUrlId'];
+        }
+
+        if (!isset($paylinkData['businessId']) && isset($paylinkData['store']['businessId'])) {
+            $paylinkData['businessId'] = $paylinkData['store']['businessId'];
+        }
+
         if (!isset($paylinkData['id'], $paylinkData['businessId'])) {
             $this->context->getLog()->error(
                 'PaylinkService::upsert: missing required fields (id or businessId)'
@@ -63,7 +71,14 @@ class PaylinkService
             $amountMinor = Format::amount($paylinkData['amount']['amount']);
         }
         $currency = $paylinkData['amount']['currency'] ?? $paylinkData['currency'] ?? null;
-        $metadata = Format::jsonObject($paylinkData['metadata'] ?? []);
+        $metadataPayload = $paylinkData['metadata'] ?? [];
+        if (is_string($metadataPayload)) {
+            $decodedMetadata = json_decode($metadataPayload, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $metadataPayload = $decodedMetadata;
+            }
+        }
+        $metadata = Format::jsonObject($metadataPayload);
         $expiresAtExt = Format::optionalTimestamp(
             $paylinkData['expiresAt']
                 ?? $paylinkData['expireAt']
@@ -516,16 +531,13 @@ class PaylinkService
     }
 
     /**
-     * Fetch paylink datasets for each store that belongs to the given business.
+     * Fetch paylinks for the given business across all associated stores.
      *
      * @param string|null $businessId
-     * @return array<int, array{
-     *     storeId: string,
-     *     store: array<mixed>,
-     *     recentSales: array<mixed>,
-     *     totalSales: array<mixed>,
-     *     all: array<mixed>
-     * }>|false
+     * @return array{
+     *     checkoutUrls: array<int, array<mixed>>,
+     *     links?: array<int, array<mixed>>,
+     * }|array<int, mixed>|false
      */
     public function fetchByBusinessId(?string $businessId = null): array|false
     {
@@ -566,20 +578,37 @@ class PaylinkService
             return [];
         }
 
-        $results = [];
+        $checkoutUrls = [];
+        $links = [];
+        $primaryStoreId = null;
+
         foreach ($stores as $store) {
             if (!is_array($store) || empty($store['id'])) {
                 continue;
             }
 
             $storeId = (string) $store['id'];
-            $results[] = [
-                'storeId' => $storeId,
-                'store' => $store,
-                'recentSales' => $this->requestPaylinkCollection($storeId, $accessToken, 'recentSales'),
-                'totalSales' => $this->requestPaylinkCollection($storeId, $accessToken, 'totalSales'),
-                'all' => $this->requestPaylinkCollection($storeId, $accessToken, 'all'),
-            ];
+            if ($primaryStoreId === null) {
+                $primaryStoreId = $storeId;
+            }
+
+            $payload = $this->requestPaylinkCollection($storeId, $accessToken, 'store');
+            $this->appendCheckoutUrls($checkoutUrls, $payload, $storeId, $businessId);
+            $this->appendLinks($links, $payload);
+        }
+
+        if ($primaryStoreId !== null) {
+            $allPayload = $this->requestPaylinkCollection($primaryStoreId, $accessToken, 'all');
+            $this->appendCheckoutUrls($checkoutUrls, $allPayload, $primaryStoreId, $businessId);
+            $this->appendLinks($links, $allPayload);
+        }
+
+        $payload = [
+            'checkoutUrls' => array_values($checkoutUrls),
+        ];
+
+        if (!empty($links)) {
+            $payload['links'] = array_values($links);
         }
 
         FetchResponseLogger::info(
@@ -588,30 +617,45 @@ class PaylinkService
             [
                 'businessId' => $businessId,
                 'entity' => 'paylinks',
-                'payload' => $results,
+                'payload' => $payload,
             ]
         );
 
-        return $results;
+        if (empty($payload['checkoutUrls'])) {
+            return empty($payload['links'] ?? []) ? [] : $payload;
+        }
+
+        return $payload;
     }
 
     /**
      * @param string $storeId
      * @param string $accessToken
-     * @param string $collection One of "recentSales", "totalSales" or "all".
+     * @param string $collection Either "store" for the per-store dataset or "all" for the business aggregate.
      *
      * @return array<mixed>
      */
     private function requestPaylinkCollection(string $storeId, string $accessToken, string $collection): array
     {
-        $url = sprintf('%s/%s/payLinks/%s', self::PAYLINK_STORES_ENDPOINT, $storeId, $collection);
+        $suffix = $collection === 'all' ? '/all' : '';
+        $url = sprintf('%s/%s/payLinks%s', self::PAYLINK_STORES_ENDPOINT, $storeId, $suffix);
+
+        $options = [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $accessToken,
+                'Content-Type' => 'application/json',
+            ],
+        ];
+
+        if ($collection === 'all') {
+            $options['json'] = [
+                'page' => 1,
+                'pageSize' => 25,
+            ];
+        }
 
         try {
-            $response = $this->httpClient->get($url, [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $accessToken,
-                ],
-            ]);
+            $response = $this->httpClient->get($url, $options);
 
             $data = json_decode($response->getBody(), true);
             return is_array($data) ? $data : [];
@@ -638,5 +682,96 @@ class PaylinkService
         }
 
         return [];
+    }
+
+    /**
+     * @param array<string, array<mixed>> $aggregate
+     * @param array<mixed> $payload
+     */
+    private function appendCheckoutUrls(array &$aggregate, array $payload, string $storeId, ?string $businessId): void
+    {
+        $collection = $payload['checkoutUrls'] ?? [];
+        if (!is_array($collection)) {
+            return;
+        }
+
+        foreach ($collection as $paylink) {
+            if (!is_array($paylink)) {
+                continue;
+            }
+
+            $normalized = $this->normalizePaylinkPayload($paylink, $storeId, $businessId);
+            $paylinkId = $normalized['id'] ?? $normalized['checkoutUrlId'] ?? null;
+
+            if (!is_string($paylinkId) || $paylinkId === '') {
+                continue;
+            }
+
+            $aggregate[$paylinkId] = $normalized;
+        }
+    }
+
+    /**
+     * @param array<string, array<mixed>> $aggregate
+     * @param array<mixed> $payload
+     */
+    private function appendLinks(array &$aggregate, array $payload): void
+    {
+        $links = $payload['links'] ?? [];
+        if (!is_array($links)) {
+            return;
+        }
+
+        foreach ($links as $link) {
+            if (!is_array($link)) {
+                continue;
+            }
+
+            $key = ($link['rel'] ?? '') . '|' . ($link['href'] ?? '');
+            if ($key === '|') {
+                $encoded = json_encode($link);
+                $key = $encoded !== false ? md5($encoded) : uniqid('paylink-link-', true);
+            }
+
+            $aggregate[$key] = $link;
+        }
+    }
+
+    /**
+     * @param array<mixed> $paylink
+     */
+    private function normalizePaylinkPayload(array $paylink, string $storeId, ?string $businessId): array
+    {
+        $normalized = $paylink;
+
+        if (!isset($normalized['id']) && isset($normalized['checkoutUrlId'])) {
+            $normalized['id'] = $normalized['checkoutUrlId'];
+        } elseif (!isset($normalized['checkoutUrlId']) && isset($normalized['id'])) {
+            $normalized['checkoutUrlId'] = $normalized['id'];
+        }
+
+        if (!isset($normalized['storeId'])) {
+            $normalized['storeId'] = $storeId;
+        }
+
+        if (!isset($normalized['businessId']) && $businessId !== null) {
+            $normalized['businessId'] = $businessId;
+        }
+
+        if (isset($normalized['metadata']) && is_string($normalized['metadata'])) {
+            $decoded = json_decode($normalized['metadata'], true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $normalized['metadata'] = $decoded;
+            }
+        }
+
+        if (isset($normalized['domain']) && is_string($normalized['domain'])) {
+            $domain = trim($normalized['domain']);
+            if ($domain === '' || strtolower($domain) === 'null') {
+                $normalized['domain'] = null;
+            }
+        }
+
+        return $normalized;
     }
 }
