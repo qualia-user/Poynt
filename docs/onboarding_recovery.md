@@ -20,7 +20,7 @@ Follow these steps end-to-end to purge a broken install and immediately trigger 
    * Add `--drop-tokens` if the OAuth credentials for the business should be removed as well.
    * The command prints a short status message to STDOUT and exits with `0` on success.
 
-2. **Re-run the onboarding gather for the resources you need**
+2. **Re-run the onboarding gather for targeted resources**
 
    ```bash
    php scripts/gather_resources.php --business=<BUSINESS_ID> --resources=business,store
@@ -35,6 +35,9 @@ Follow these steps end-to-end to purge a broken install and immediately trigger 
    Any time you need to refresh the data, run the gather command again with the same `--business` identifier. You do **not** need to purge again unless you want to wipe all local data first.
 
 4. **Verify logs**
+   * The script returns a JSON summary describing which resources were matched and whether their synchronization succeeded. A non-zero exit code indicates that at least one resource failed.
+
+3. **Verify logs**
 
    Inspect the application logs for additional context if any resource reports a failure. The gatherer logs each fetch/upsert attempt along with detailed error messages.
 
@@ -55,6 +58,13 @@ The recovery endpoint is available at `/internal/onboarding/resources` and can b
    The server responds with a JSON payload summarizing the gather operation, mirroring the CLI output.
 
 3. Reload the page whenever you need to repeat the gather. Update the `resources` query string if you want to target a different subset.
+Navigate to:
+
+```
+https://<your-host>/internal/onboarding/resources?businessId=<BUSINESS_ID>&resources=business,store
+```
+
+The response is a JSON payload summarizing the gather operation, mirroring the CLI output.
 
 ### POST request example
 
