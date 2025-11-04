@@ -136,7 +136,7 @@ class CallbackServiceTest extends TestCase
         $this->assertFalse($result);
     }
 
-    public function testPurgeBusinessRemovesTokensWhenRequested(): void
+    public function testPurgeBusinessInstallationRemovesTokensWhenRequested(): void
     {
         $logger = $this->createMock(Logger::class);
         $context = $this->createMock(Context::class);
@@ -163,13 +163,13 @@ class CallbackServiceTest extends TestCase
             $this->createMock(ServiceFactory::class)
         );
 
-        $callbackService->purgeBusiness('business-123', false);
+        $callbackService->purgeBusinessInstallation('business-123', false);
 
         $this->assertContains('DELETE FROM app_token WHERE business_id = :biz', $capturedStatements);
         $this->assertContains('DELETE FROM merchant_token WHERE business_id = :biz', $capturedStatements);
     }
 
-    public function testPurgeBusinessPreservesTokensByDefault(): void
+    public function testPurgeBusinessInstallationPreservesTokensByDefault(): void
     {
         $logger = $this->createMock(Logger::class);
         $context = $this->createMock(Context::class);
@@ -196,7 +196,7 @@ class CallbackServiceTest extends TestCase
             $this->createMock(ServiceFactory::class)
         );
 
-        $callbackService->purgeBusiness('business-123');
+        $callbackService->purgeBusinessInstallation('business-123');
 
         $this->assertNotContains('DELETE FROM app_token WHERE business_id = :biz', $capturedStatements);
         $this->assertNotContains('DELETE FROM merchant_token WHERE business_id = :biz', $capturedStatements);
