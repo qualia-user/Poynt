@@ -761,7 +761,46 @@ class CallbackService
         }
     }
 
-    private function gatherInitialResources(string $businessId): bool
+    public function gatherResourcesForBusiness(string $businessId): bool
+    {
+        return $this->gatherInitialResources($businessId);
+    }
+
+    public function gatherResourcesForStore(string $businessId, string $storeId): bool
+    {
+        $storeId = trim($storeId);
+
+        if ($storeId === '') {
+            $this->context->getLog()->warning(
+                sprintf('CallbackService::gatherResourcesForStore missing storeId for business %s.', $businessId)
+            );
+
+            return false;
+        }
+
+        $this->context->getLog()->info(
+            sprintf(
+                'CallbackService::gatherResourcesForStore starting for business %s store %s.',
+                $businessId,
+                $storeId
+            )
+        );
+
+        $result = $this->gatherInitialResources($businessId, $this->createStoreResourceFilter($storeId));
+
+        $this->context->getLog()->info(
+            sprintf(
+                'CallbackService::gatherResourcesForStore finished for business %s store %s with status: %s.',
+                $businessId,
+                $storeId,
+                $result ? 'success' : 'failure'
+            )
+        );
+
+        return $result;
+    }
+
+    private function gatherInitialResources(string $businessId, ?callable $itemFilter = null): bool
     {
         $this->context->getLog()->info(
             sprintf('CallbackService::gatherInitialResources starting for business %s.', $businessId)
@@ -775,7 +814,7 @@ class CallbackService
                 sprintf('CallbackService::gatherInitialResources syncing %s for business %s.', $serviceClass, $businessId)
             );
 
-            $result = $this->syncResourceCollection($businessId, $service, $serviceClass);
+            $result = $this->syncResourceCollection($businessId, $service, $serviceClass, $itemFilter);
             if (!$result) {
                 $allSuccessful = false;
                 $this->context->getLog()->warning(
@@ -807,10 +846,129 @@ class CallbackService
         return $allSuccessful;
     }
 
+    private function createStoreResourceFilter(string $storeId): callable
+    {
+        return function (array $item) use ($storeId): bool {
+            return $this->itemAppliesToStore($item, $storeId);
+        };
+    }
+
+    private function itemAppliesToStore(array $item, string $storeId): bool
+    {
+        $storeIdentifiers = $this->extractStoreIdentifiersFromItem($item);
+
+        if ($storeIdentifiers === []) {
+            return true;
+        }
+
+        return in_array($storeId, $storeIdentifiers, true);
+    }
+
+    private function extractStoreIdentifiersFromItem(array $item): array
+    {
+        $candidates = [];
+
+        foreach (['storeId', 'store_id'] as $key) {
+            if (array_key_exists($key, $item)) {
+                $candidates[] = $this->normalizeStoreIdentifier($item[$key]);
+            }
+        }
+
+        if (array_key_exists('store', $item)) {
+            $candidates = array_merge($candidates, $this->collectStoreIdentifiers($item['store']));
+        }
+
+        if (array_key_exists('stores', $item)) {
+            $candidates = array_merge($candidates, $this->collectStoreIdentifiers($item['stores']));
+        }
+
+        if (array_key_exists('storeIds', $item)) {
+            $candidates = array_merge($candidates, $this->collectStoreIdentifiers($item['storeIds']));
+        }
+
+        return array_values(array_unique(array_filter($candidates, static function ($value): bool {
+            return is_string($value) && $value !== '';
+        })));
+    }
+
+    private function collectStoreIdentifiers(mixed $value): array
+    {
+        if ($value === null) {
+            return [];
+        }
+
+        if (is_string($value)) {
+            $normalized = trim($value);
+
+            return $normalized === '' ? [] : [$normalized];
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        if (!array_is_list($value)) {
+            $results = [];
+
+            foreach (['id', 'storeId', 'store_id'] as $key) {
+                if (array_key_exists($key, $value)) {
+                    $results = array_merge($results, $this->collectStoreIdentifiers($value[$key]));
+                }
+            }
+
+            return $results;
+        }
+
+        $results = [];
+
+        foreach ($value as $nested) {
+            $results = array_merge($results, $this->collectStoreIdentifiers($nested));
+        }
+
+        return $results;
+    }
+
+    private function normalizeStoreIdentifier(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_string($value)) {
+            $normalized = trim($value);
+
+            return $normalized === '' ? null : $normalized;
+        }
+
+        if (is_array($value)) {
+            foreach (['id', 'storeId', 'store_id'] as $key) {
+                if (array_key_exists($key, $value)) {
+                    return $this->normalizeStoreIdentifier($value[$key]);
+                }
+            }
+
+            if (array_is_list($value)) {
+                foreach ($value as $nested) {
+                    $normalized = $this->normalizeStoreIdentifier($nested);
+                    if ($normalized !== null) {
+                        return $normalized;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     /**
      * @param object $service
      */
-    private function syncResourceCollection(string $businessId, object $service, ?string $serviceClass = null): bool
+    private function syncResourceCollection(
+        string $businessId,
+        object $service,
+        ?string $serviceClass = null,
+        ?callable $itemFilter = null
+    ): bool
     {
         $serviceClass = $serviceClass ?? get_class($service);
 
@@ -861,6 +1019,19 @@ class CallbackService
         }
 
         $normalized = $this->normalizeResourceItems($raw);
+
+        if ($itemFilter !== null) {
+            $normalized['items'] = array_values(array_filter(
+                $normalized['items'],
+                function ($item) use ($itemFilter): bool {
+                    if (!is_array($item)) {
+                        return true;
+                    }
+
+                    return $itemFilter($item);
+                }
+            ));
+        }
         $allSuccessful = true;
         $processedItems = 0;
         $successfulItems = 0;
