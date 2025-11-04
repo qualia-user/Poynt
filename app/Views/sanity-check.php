@@ -1,5 +1,5 @@
 <?php
-/**s
+/**
  * @return string
  * @var string $query
  */
@@ -8,7 +8,48 @@ $escape = static function (mixed $value): string {
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 };
 
-$formatValue = static function (mixed $value) use (&$formatValue, $escape): string {
+$stringLength = static function (string $value): int {
+    if (function_exists('mb_strlen')) {
+        return mb_strlen($value, 'UTF-8');
+    }
+
+    return strlen($value);
+};
+
+$stringSlice = static function (string $value, int $offset, int $length) {
+    if (function_exists('mb_substr')) {
+        return mb_substr($value, $offset, $length, 'UTF-8');
+    }
+
+    return substr($value, $offset, $length);
+};
+
+$formatLargeValue = static function (string $column, string $value, bool $isJson = false) use ($escape, $stringLength, $stringSlice): string {
+    $length = $stringLength($value);
+    $previewLimit = $isJson ? 1200 : 600;
+    $preview = $stringSlice($value, 0, $previewLimit);
+    $ellipsis = $length > $previewLimit ? '…' : '';
+    $columnLabel = trim(str_replace('_', ' ', $column));
+    if ($columnLabel === '') {
+        $columnLabel = 'value';
+    }
+    $columnLabel = ucwords($columnLabel);
+    $label = sprintf(
+        'Expand %s (%d characters%s)',
+        $columnLabel,
+        $length,
+        $isJson ? ', JSON preview' : ''
+    );
+
+    return sprintf(
+        '<details class="payload-preview"><summary>%s</summary><pre>%s%s</pre></details>',
+        $escape($label),
+        $escape($preview),
+        $escape($ellipsis)
+    );
+};
+
+$formatValue = static function (string $column, mixed $value) use (&$formatValue, $escape, $formatLargeValue, $stringLength, $stringSlice): string {
     if ($value === null) {
         return '<span class="muted">null</span>';
     }
@@ -23,12 +64,28 @@ $formatValue = static function (mixed $value) use (&$formatValue, $escape): stri
 
     if (is_array($value)) {
         $encoded = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        return '<pre>' . $escape($encoded ?: '[]') . '</pre>';
+        if ($encoded !== false && $encoded !== null) {
+            if ($stringLength($encoded) > 1400) {
+                return $formatLargeValue($column, $encoded, true);
+            }
+
+            return '<pre>' . $escape($encoded) . '</pre>';
+        }
+
+        return '<pre>[]</pre>';
     }
 
     if (is_object($value)) {
         $encoded = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        return '<pre>' . $escape($encoded ?: '{}') . '</pre>';
+        if ($encoded !== false && $encoded !== null) {
+            if ($stringLength($encoded) > 1400) {
+                return $formatLargeValue($column, $encoded, true);
+            }
+
+            return '<pre>' . $escape($encoded) . '</pre>';
+        }
+
+        return '<pre>{}</pre>';
     }
 
     if (is_string($value)) {
@@ -36,8 +93,16 @@ $formatValue = static function (mixed $value) use (&$formatValue, $escape): stri
         if ($trimmed !== '' && ($trimmed[0] === '{' || $trimmed[0] === '[')) {
             $decoded = json_decode($value, true);
             if (json_last_error() === JSON_ERROR_NONE) {
-                return $formatValue($decoded);
+                return $formatValue($column, $decoded);
             }
+        }
+
+        $length = $stringLength($value);
+        $columnLower = strtolower($column);
+        $looksLikePayload = str_contains($columnLower, 'payload') || str_contains($columnLower, 'raw');
+
+        if ($length > 1400 || ($looksLikePayload && $length > 400)) {
+            return $formatLargeValue($column, $value, false);
         }
     }
 
@@ -220,6 +285,65 @@ $humanize = static function (string $table) use ($escape): string {
             font-size: 0.85rem;
         }
 
+        .business-flags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .match-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.35rem 0.85rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            background: rgba(56, 189, 248, 0.18);
+            color: #bae6fd;
+        }
+
+        .match-badge-alt {
+            border-color: rgba(129, 140, 248, 0.35);
+            background: rgba(129, 140, 248, 0.18);
+            color: #c7d2fe;
+        }
+
+        .matched-stores {
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .matched-stores strong {
+            font-size: 0.9rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .matched-store-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .store-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.75rem;
+            border-radius: 999px;
+            background: rgba(59, 130, 246, 0.18);
+            border: 1px solid rgba(59, 130, 246, 0.35);
+            font-size: 0.85rem;
+        }
+
         details {
             background: rgba(15, 23, 42, 0.55);
             border: 1px solid rgba(148, 163, 184, 0.25);
@@ -327,6 +451,14 @@ $humanize = static function (string $table) use ($escape): string {
             background: rgba(30, 41, 59, 0.55);
         }
 
+        tbody tr.row-match td {
+            background: rgba(56, 189, 248, 0.12);
+        }
+
+        tbody tr.row-match-store td {
+            background: rgba(167, 139, 250, 0.16);
+        }
+
         pre {
             margin: 0;
             white-space: pre-wrap;
@@ -359,6 +491,28 @@ $humanize = static function (string $table) use ($escape): string {
         .badge-false {
             background: rgba(248, 113, 113, 0.15);
             color: #fecaca;
+        }
+
+        .payload-preview {
+            margin: 0;
+        }
+
+        .payload-preview summary {
+            cursor: pointer;
+            color: var(--accent);
+            font-weight: 600;
+            letter-spacing: 0.05em;
+        }
+
+        .payload-preview[open] summary {
+            color: var(--text);
+        }
+
+        .payload-preview pre {
+            margin-top: 0.75rem;
+            padding: 0.75rem;
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 0.75rem;
         }
 
         @media (max-width: 768px) {
@@ -408,10 +562,21 @@ $humanize = static function (string $table) use ($escape): string {
         $tables = $summary['tables'];
         $businessName = $business['name'] ?? '';
         $businessId = $business['business_id'] ?? '';
+        $matchedStores = $summary['matchedStores'] ?? [];
+        $matchedStoreIds = $summary['matchedStoreIds'] ?? [];
+        $matchedDirectly = !empty($summary['matchedDirectly']);
         ?>
         <section class="business-card">
             <header class="business-header">
                 <h2><?= $escape($businessName !== '' ? $businessName : $businessId) ?></h2>
+                <div class="business-flags">
+                    <?php if ($matchedDirectly): ?>
+                        <span class="match-badge">Direct business match</span>
+                    <?php endif; ?>
+                    <?php if (!$matchedDirectly && !empty($matchedStores)): ?>
+                        <span class="match-badge match-badge-alt">Found via store search</span>
+                    <?php endif; ?>
+                </div>
                 <div class="business-meta">
                     <?php if ($businessId !== ''): ?>
                         <span>Business ID: <?= $escape($businessId) ?></span>
@@ -423,6 +588,38 @@ $humanize = static function (string $table) use ($escape): string {
                         <span>Updated: <?= $escape($business['updated_at']) ?></span>
                     <?php endif; ?>
                 </div>
+                <?php if (!empty($matchedStores)): ?>
+                    <div class="matched-stores">
+                        <strong>Matched store<?= count($matchedStores) === 1 ? '' : 's' ?> for this search</strong>
+                        <div class="matched-store-list">
+                            <?php foreach ($matchedStores as $store):
+                                $storeName = trim((string) ($store['name'] ?? ''));
+                                $storeId = (string) ($store['store_id'] ?? '');
+                                $storeNumber = trim((string) ($store['store_number'] ?? ''));
+                                $storeStatus = trim((string) ($store['status'] ?? ''));
+                                $parts = [];
+                                if ($storeName !== '') {
+                                    $parts[] = $storeName;
+                                }
+                                if ($storeNumber !== '') {
+                                    $parts[] = 'Store #' . $storeNumber;
+                                }
+                                if ($storeId !== '') {
+                                    $parts[] = 'ID ' . $storeId;
+                                }
+                                if ($storeStatus !== '') {
+                                    $parts[] = ucfirst($storeStatus);
+                                }
+                                $label = implode(' • ', array_unique(array_filter($parts)));
+                                if ($label === '') {
+                                    $label = $storeId !== '' ? 'ID ' . $storeId : 'Store';
+                                }
+                                ?>
+                                <span class="store-chip"><?= $escape($label) ?></span>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
             </header>
 
             <?php foreach ($tables as $tableName => $rows):
@@ -455,10 +652,22 @@ $humanize = static function (string $table) use ($escape): string {
                                 </tr>
                                 </thead>
                                 <tbody>
-                                <?php foreach ($rows as $row): ?>
-                                    <tr>
+                                <?php foreach ($rows as $row):
+                                    $rowClasses = [];
+                                    if ($matchedDirectly && $tableName === 'business') {
+                                        $rowClasses[] = 'row-match';
+                                    }
+                                    $rowStoreId = isset($row['store_id']) ? (string) $row['store_id'] : null;
+                                    $matchesStore = $rowStoreId !== null && in_array($rowStoreId, $matchedStoreIds, true);
+                                    if ($matchesStore) {
+                                        $rowClasses[] = 'row-match';
+                                        $rowClasses[] = 'row-match-store';
+                                    }
+                                    $rowClassAttr = empty($rowClasses) ? '' : ' class="' . implode(' ', $rowClasses) . '"';
+                                    ?>
+                                    <tr<?= $rowClassAttr ?>>
                                         <?php foreach ($columns as $column): ?>
-                                            <td><?= $formatValue($row[$column] ?? null) ?></td>
+                                            <td><?= $formatValue($column, $row[$column] ?? null) ?></td>
                                         <?php endforeach; ?>
                                     </tr>
                                 <?php endforeach; ?>
