@@ -551,11 +551,20 @@ class CallbackService
 
         foreach ($normalized['items'] as $item) {
             try {
-                $service->upsert($item);
+                $result = $service->upsert($item);
             } catch (Throwable $e) {
                 $this->context->getLog()->error(
                     sprintf('CallbackService::syncResourceCollection failed to persist resource for business %s: %s', $businessId, $e->getMessage()),
                     ['exception' => $e, 'item' => $item]
+                );
+
+                return false;
+            }
+
+            if ($result === false) {
+                $this->context->getLog()->error(
+                    sprintf('CallbackService::syncResourceCollection failed to persist resource for business %s: upsert returned false', $businessId),
+                    ['item' => $item]
                 );
 
                 return false;
