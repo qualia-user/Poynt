@@ -469,6 +469,62 @@ namespace Controllers {
             self::assertSame(Response::STATUS_OK, $last['status']);
         }
 
+        public function testWebhookInventoryEventEnrichesResourceWithContext(): void
+        {
+            $payload = [
+                'eventType' => 'INVENTORY_UPDATED',
+                'businessId' => 'biz-3',
+                'storeId' => 'store-top',
+                'payload' => [
+                    'inventory' => [
+                        'id' => 'inventory-1',
+                        'productId' => 'prod-10',
+                    ],
+                ],
+            ];
+
+            $api = $this->createApi($payload, 'POST');
+
+            $connection = $this->createMock(Connection::class);
+            $connection->expects(self::once())->method('insert')->with('webhook_audit', self::anything(), self::anything());
+            $connection->expects(self::once())->method('lastInsertId')->willReturn('12');
+            $connection->expects(self::once())->method('update');
+
+            $context = $this->createContext($api, $connection);
+
+            $inventoryService = $this->getMockBuilder(InventoryService::class)
+                ->disableOriginalConstructor()
+                ->onlyMethods(['upsert'])
+                ->getMock();
+
+            $inventoryService->expects(self::once())
+                ->method('upsert')
+                ->with(self::callback(static function (array $data): bool {
+                    return $data['businessId'] === 'biz-3'
+                        && $data['storeId'] === 'store-top'
+                        && $data['productId'] === 'prod-10';
+                }));
+
+            $factory = $this->getMockBuilder(ServiceFactory::class)
+                ->disableOriginalConstructor()
+                ->onlyMethods(['inventory'])
+                ->getMock();
+
+            $factory->expects(self::once())
+                ->method('inventory')
+                ->with('biz-3')
+                ->willReturn($inventoryService);
+
+            $controller = new WebhooksController($context);
+            $controller->setServiceFactory($factory);
+
+            $controller->eventListener();
+
+            $last = Api::getLastResponse();
+            self::assertNotNull($last);
+            self::assertSame(Response::STATUS_OK, $last['status']);
+        }
+
         public function testWebhookEndpointProcessesOrderEvent(): void
         {
             $payload = [

@@ -337,6 +337,7 @@ class WebhooksController extends Controller
             return;
         }
 
+        $inventory = $this->enrichResourceWithContext($inventory, $payload, ['businessId', 'storeId']);
         if (!isset($inventory['businessId']) && isset($payload['businessId'])) {
             $inventory['businessId'] = $payload['businessId'];
         }
@@ -539,6 +540,16 @@ class WebhooksController extends Controller
         ];
 
         foreach ($fallbackPaths as $path) {
+            if (!empty($preferredPaths)) {
+                foreach ($preferredPaths as $preferredPath) {
+                    $combinedPath = array_merge($path, (array) $preferredPath);
+                    $value = $this->resolveNestedValue($payload, $combinedPath);
+                    if (is_array($value)) {
+                        return $value;
+                    }
+                }
+            }
+
             $value = $this->resolveNestedValue($payload, $path);
             if (is_array($value)) {
                 return $value;
