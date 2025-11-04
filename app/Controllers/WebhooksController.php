@@ -328,6 +328,7 @@ class WebhooksController extends Controller
     {
         $inventory = $this->extractResource($payload, [
             ['inventory'],
+            ['payload'],
         ]);
 
         if ($inventory === null) {
