@@ -6,6 +6,8 @@ use App\Core\Context;
 use App\Core\Response;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\OAuthHandlerInterface;
+use DateTime;
+use DateTimeInterface;
 use RuntimeException;
 use Throwable;
 
@@ -700,7 +702,10 @@ class CallbackService
         array $appTokenPayload,
         array $merchantTokenPayload
     ): bool {
-        $appAccessToken = $this->extractAccessToken($appTokenPayload);
+        $normalizedAppToken = $this->normalizeTokenPayload($appTokenPayload);
+        $normalizedMerchantToken = $this->normalizeTokenPayload($merchantTokenPayload);
+
+        $appAccessToken = $this->extractAccessToken($normalizedAppToken);
         if ($appAccessToken === null) {
             $this->context->getLog()->error(
                 sprintf(
@@ -712,11 +717,33 @@ class CallbackService
             return false;
         }
 
-        $merchantAccessToken = $this->extractAccessToken($merchantTokenPayload);
+        if (!isset($normalizedAppToken['refreshToken']) || !isset($normalizedAppToken['expiresIn'])) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeAndReinstall aborted for business %s: incomplete app token payload.',
+                    $businessId
+                )
+            );
+
+            return false;
+        }
+
+        $merchantAccessToken = $this->extractAccessToken($normalizedMerchantToken);
         if ($merchantAccessToken === null) {
             $this->context->getLog()->error(
                 sprintf(
                     'CallbackService::purgeAndReinstall aborted for business %s: missing accessToken in merchant token payload.',
+                    $businessId
+                )
+            );
+
+            return false;
+        }
+
+        if (!isset($normalizedMerchantToken['refreshToken']) || !isset($normalizedMerchantToken['expiresIn'])) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeAndReinstall aborted for business %s: incomplete merchant token payload.',
                     $businessId
                 )
             );
@@ -730,8 +757,8 @@ class CallbackService
 
         try {
             $tokenService = $this->serviceFactory->token();
-            $tokenService->saveAppToken($businessId, $appTokenPayload);
-            $tokenService->saveMerchantToken($businessId, $merchantTokenPayload);
+            $tokenService->saveAppToken($businessId, $normalizedAppToken);
+            $tokenService->saveMerchantToken($businessId, $normalizedMerchantToken);
         } catch (Throwable $e) {
             $this->context->getLog()->error(
                 sprintf(
@@ -748,11 +775,64 @@ class CallbackService
         return $this->runBusinessWorkflow(
             $businessId,
             $storeId,
-            $appTokenPayload,
-            $merchantTokenPayload,
+            $normalizedAppToken,
+            $normalizedMerchantToken,
             null,
             null
         );
+    }
+
+    /**
+     * Ensure token payloads contain camelCase keys expected by TokenService.
+     */
+    private function normalizeTokenPayload(array $token): array
+    {
+        $normalized = $token;
+
+        if (!isset($normalized['accessToken']) && isset($token['access_token'])) {
+            $normalized['accessToken'] = $token['access_token'];
+        }
+
+        if (!isset($normalized['refreshToken']) && isset($token['refresh_token'])) {
+            $normalized['refreshToken'] = $token['refresh_token'];
+        }
+
+        if (!isset($normalized['expiresIn']) && isset($token['expires_in'])) {
+            $normalized['expiresIn'] = $token['expires_in'];
+        }
+
+        if (!isset($normalized['expiresIn'])) {
+            foreach (['expiresAt', 'expires_at'] as $key) {
+                if (!array_key_exists($key, $token)) {
+                    continue;
+                }
+
+                $dateTime = $this->coerceExpiresAtToDateTime($token[$key]);
+                if ($dateTime !== null) {
+                    $normalized['expiresIn'] = $dateTime;
+                    break;
+                }
+            }
+        }
+
+        return $normalized;
+    }
+
+    private function coerceExpiresAtToDateTime(mixed $value): ?DateTime
+    {
+        if ($value instanceof DateTimeInterface) {
+            return DateTime::createFromInterface($value);
+        }
+
+        if (is_string($value) && trim($value) !== '') {
+            try {
+                return new DateTime($value);
+            } catch (Throwable $e) {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     public function purgeBusinessInstallation(string $businessId, bool $preserveTokens = true): bool
