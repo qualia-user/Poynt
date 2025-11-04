@@ -586,12 +586,42 @@ class WebhooksController extends Controller
         $keys = array_values(array_unique(array_merge($defaultKeys, $keys)));
 
         foreach ($keys as $key) {
+            if (!isset($resource[$key])) {
+                $value = $this->extractContextValue($payload, $key);
+                if ($value !== null) {
+                    $resource[$key] = $value;
+                }
             if (!isset($resource[$key]) && isset($payload[$key])) {
                 $resource[$key] = $payload[$key];
             }
         }
 
         return $resource;
+    }
+
+    private function extractContextValue(array $payload, string $key): mixed
+    {
+        if (isset($payload[$key])) {
+            return $payload[$key];
+        }
+
+        $fallbackPaths = [
+            ['payload'],
+            ['data'],
+            ['resource'],
+            ['body'],
+            ['eventPayload'],
+            ['object'],
+        ];
+
+        foreach ($fallbackPaths as $path) {
+            $value = $this->resolveNestedValue($payload, array_merge($path, [$key]));
+            if ($value !== null) {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
 }
