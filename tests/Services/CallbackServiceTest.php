@@ -8,11 +8,13 @@ use App\Core\Context;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Services\CallbackService;
 use App\Services\ServiceFactory;
+use App\Services\TokenService;
 use Doctrine\DBAL\Connection;
 use Monolog\Logger;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
+use DateTime;
 
 class CallbackServiceTest extends TestCase
 {
@@ -136,7 +138,7 @@ class CallbackServiceTest extends TestCase
         $this->assertFalse($result);
     }
 
-    public function testPurgeBusinessRemovesTokensWhenRequested(): void
+    public function testPurgeBusinessInstallationRemovesTokensWhenRequested(): void
     {
         $logger = $this->createMock(Logger::class);
         $context = $this->createMock(Context::class);
@@ -163,13 +165,13 @@ class CallbackServiceTest extends TestCase
             $this->createMock(ServiceFactory::class)
         );
 
-        $callbackService->purgeBusiness('business-123', false);
+        $callbackService->purgeBusinessInstallation('business-123', false);
 
         $this->assertContains('DELETE FROM app_token WHERE business_id = :biz', $capturedStatements);
         $this->assertContains('DELETE FROM merchant_token WHERE business_id = :biz', $capturedStatements);
     }
 
-    public function testPurgeBusinessPreservesTokensByDefault(): void
+    public function testPurgeBusinessInstallationPreservesTokensByDefault(): void
     {
         $logger = $this->createMock(Logger::class);
         $context = $this->createMock(Context::class);
@@ -196,10 +198,101 @@ class CallbackServiceTest extends TestCase
             $this->createMock(ServiceFactory::class)
         );
 
-        $callbackService->purgeBusiness('business-123');
+        $callbackService->purgeBusinessInstallation('business-123');
 
         $this->assertNotContains('DELETE FROM app_token WHERE business_id = :biz', $capturedStatements);
         $this->assertNotContains('DELETE FROM merchant_token WHERE business_id = :biz', $capturedStatements);
+    }
+
+    public function testPurgeAndReinstallNormalizesPersistedTokens(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $logger->method('info')->willReturn(null);
+        $logger->method('debug')->willReturn(null);
+        $logger->method('error')->willReturn(null);
+
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+        $context->method('getConn')->willReturn($this->createMock(Connection::class));
+
+        $tokenService = $this->createMock(TokenService::class);
+        $tokenService->expects($this->once())
+            ->method('saveAppToken')
+            ->with(
+                'business-123',
+                $this->callback(function (array $payload): bool {
+                    $this->assertSame('app-access', $payload['accessToken']);
+                    $this->assertSame('app-refresh', $payload['refreshToken']);
+                    $this->assertArrayHasKey('expiresIn', $payload);
+                    $this->assertInstanceOf(DateTime::class, $payload['expiresIn']);
+
+                    return true;
+                })
+            );
+
+        $tokenService->expects($this->once())
+            ->method('saveMerchantToken')
+            ->with(
+                'business-123',
+                $this->callback(function (array $payload): bool {
+                    $this->assertSame('merchant-access', $payload['accessToken']);
+                    $this->assertSame('merchant-refresh', $payload['refreshToken']);
+                    $this->assertArrayHasKey('expiresIn', $payload);
+                    $this->assertInstanceOf(DateTime::class, $payload['expiresIn']);
+
+                    return true;
+                })
+            );
+
+        $serviceFactory = $this->createMock(ServiceFactory::class);
+        $serviceFactory->method('token')->willReturn($tokenService);
+
+        $callbackService = $this->getMockBuilder(CallbackService::class)
+            ->setConstructorArgs([
+                $context,
+                $this->createMock(PlatformRegistry::class),
+                $serviceFactory,
+            ])
+            ->onlyMethods(['purgeBusinessInstallation', 'runBusinessWorkflow'])
+            ->getMock();
+
+        $callbackService->expects($this->once())
+            ->method('purgeBusinessInstallation')
+            ->with('business-123', false)
+            ->willReturn(true);
+
+        $callbackService->expects($this->once())
+            ->method('runBusinessWorkflow')
+            ->with(
+                'business-123',
+                'store-456',
+                $this->callback(function (array $payload): bool {
+                    return isset($payload['accessToken'], $payload['refreshToken'], $payload['expiresIn']);
+                }),
+                $this->callback(function (array $payload): bool {
+                    return isset($payload['accessToken'], $payload['refreshToken'], $payload['expiresIn']);
+                }),
+                null,
+                null
+            )
+            ->willReturn(true);
+
+        $result = $callbackService->purgeAndReinstall(
+            'business-123',
+            'store-456',
+            [
+                'access_token' => 'app-access',
+                'refresh_token' => 'app-refresh',
+                'expires_at' => '2024-01-02T03:04:05+00:00',
+            ],
+            [
+                'access_token' => 'merchant-access',
+                'refresh_token' => 'merchant-refresh',
+                'expires_at' => '2024-01-03T04:05:06+00:00',
+            ]
+        );
+
+        $this->assertTrue($result);
     }
 
     public function testSelectDefaultPlanIdHandlesNestedItems(): void

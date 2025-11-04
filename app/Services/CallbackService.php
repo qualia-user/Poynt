@@ -6,6 +6,8 @@ use App\Core\Context;
 use App\Core\Response;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\OAuthHandlerInterface;
+use DateTime;
+use DateTimeInterface;
 use RuntimeException;
 use Throwable;
 
@@ -692,6 +694,238 @@ class CallbackService
         }
 
         return null;
+    }
+
+    public function purgeAndReinstall(
+        string $businessId,
+        ?string $storeId,
+        array $appTokenPayload,
+        array $merchantTokenPayload
+    ): bool {
+        $normalizedAppToken = $this->normalizeTokenPayload($appTokenPayload);
+        $normalizedMerchantToken = $this->normalizeTokenPayload($merchantTokenPayload);
+
+        $appAccessToken = $this->extractAccessToken($normalizedAppToken);
+        if ($appAccessToken === null) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeAndReinstall aborted for business %s: missing accessToken in app token payload.',
+                    $businessId
+                )
+            );
+
+            return false;
+        }
+
+        if (!isset($normalizedAppToken['refreshToken']) || !isset($normalizedAppToken['expiresIn'])) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeAndReinstall aborted for business %s: incomplete app token payload.',
+                    $businessId
+                )
+            );
+
+            return false;
+        }
+
+        $merchantAccessToken = $this->extractAccessToken($normalizedMerchantToken);
+        if ($merchantAccessToken === null) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeAndReinstall aborted for business %s: missing accessToken in merchant token payload.',
+                    $businessId
+                )
+            );
+
+            return false;
+        }
+
+        if (!isset($normalizedMerchantToken['refreshToken']) || !isset($normalizedMerchantToken['expiresIn'])) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeAndReinstall aborted for business %s: incomplete merchant token payload.',
+                    $businessId
+                )
+            );
+
+            return false;
+        }
+
+        if (!$this->purgeBusinessInstallation($businessId, false)) {
+            return false;
+        }
+
+        try {
+            $tokenService = $this->serviceFactory->token();
+            $tokenService->saveAppToken($businessId, $normalizedAppToken);
+            $tokenService->saveMerchantToken($businessId, $normalizedMerchantToken);
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeAndReinstall failed to persist tokens for business %s: %s',
+                    $businessId,
+                    $e->getMessage()
+                ),
+                ['exception' => $e]
+            );
+
+            return false;
+        }
+
+        return $this->runBusinessWorkflow(
+            $businessId,
+            $storeId,
+            $normalizedAppToken,
+            $normalizedMerchantToken,
+            null,
+            null
+        );
+    }
+
+    /**
+     * Ensure token payloads contain camelCase keys expected by TokenService.
+     */
+    private function normalizeTokenPayload(array $token): array
+    {
+        $normalized = $token;
+
+        if (!isset($normalized['accessToken']) && isset($token['access_token'])) {
+            $normalized['accessToken'] = $token['access_token'];
+        }
+
+        if (!isset($normalized['refreshToken']) && isset($token['refresh_token'])) {
+            $normalized['refreshToken'] = $token['refresh_token'];
+        }
+
+        if (!isset($normalized['expiresIn']) && isset($token['expires_in'])) {
+            $normalized['expiresIn'] = $token['expires_in'];
+        }
+
+        if (!isset($normalized['expiresIn'])) {
+            foreach (['expiresAt', 'expires_at'] as $key) {
+                if (!array_key_exists($key, $token)) {
+                    continue;
+                }
+
+                $dateTime = $this->coerceExpiresAtToDateTime($token[$key]);
+                if ($dateTime !== null) {
+                    $normalized['expiresIn'] = $dateTime;
+                    break;
+                }
+            }
+        }
+
+        return $normalized;
+    }
+
+    private function coerceExpiresAtToDateTime(mixed $value): ?DateTime
+    {
+        if ($value instanceof DateTimeInterface) {
+            return DateTime::createFromInterface($value);
+        }
+
+        if (is_string($value) && trim($value) !== '') {
+            try {
+                return new DateTime($value);
+            } catch (Throwable $e) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    public function purgeBusinessInstallation(string $businessId, bool $preserveTokens = true): bool
+    {
+        $this->context->getLog()->info(
+            sprintf('CallbackService::purgeBusinessInstallation starting for business %s.', $businessId)
+        );
+
+        $conn = $this->context->getConn();
+        $transactionStarted = false;
+
+        $deleteStatements = [
+            'DELETE FROM hook_delivery WHERE business_id = :biz',
+            'DELETE FROM hook WHERE business_id = :biz',
+            'DELETE FROM paylink_link WHERE business_id = :biz',
+            'DELETE FROM paylink_payment WHERE business_id = :biz',
+            'DELETE FROM paylink_item WHERE business_id = :biz',
+            'DELETE FROM paylink WHERE business_id = :biz',
+            'DELETE FROM order_item USING "order" WHERE order_item.order_id = "order".order_id AND "order".business_id = :biz',
+            'DELETE FROM order_history USING "order" WHERE order_history.order_id = "order".order_id AND "order".business_id = :biz',
+            'DELETE FROM order_shipment USING "order" WHERE order_shipment.order_id = "order".order_id AND "order".business_id = :biz',
+            'DELETE FROM "order" WHERE business_id = :biz',
+            'DELETE FROM transaction WHERE business_id = :biz',
+            'DELETE FROM subscription WHERE business_id = :biz',
+            'DELETE FROM variant_inventory WHERE business_id = :biz',
+            'DELETE FROM inventory WHERE business_id = :biz',
+            'DELETE FROM inventory_summary WHERE business_id = :biz',
+            'DELETE FROM product_variant WHERE product_id IN (SELECT product_id FROM product WHERE business_id = :biz)',
+            'DELETE FROM catalog_product WHERE catalog_id IN (SELECT catalog_id FROM catalog WHERE business_id = :biz)',
+            'DELETE FROM catalog_product WHERE product_id IN (SELECT product_id FROM product WHERE business_id = :biz)',
+            'DELETE FROM product WHERE business_id = :biz',
+            'DELETE FROM category WHERE business_id = :biz',
+            'DELETE FROM catalog WHERE business_id = :biz',
+            'DELETE FROM tax WHERE business_id = :biz',
+            'DELETE FROM business_user WHERE business_id = :biz',
+            'DELETE FROM customer WHERE business_id = :biz',
+            'DELETE FROM terminal WHERE store_id IN (SELECT store_id FROM store WHERE business_id = :biz)',
+            'DELETE FROM store WHERE business_id = :biz',
+            'DELETE FROM token_refresh_log WHERE business_id = :biz',
+        ];
+
+        if (!$preserveTokens) {
+            $deleteStatements[] = 'DELETE FROM app_token WHERE business_id = :biz';
+            $deleteStatements[] = 'DELETE FROM merchant_token WHERE business_id = :biz';
+        }
+
+        $deleteStatements[] = 'DELETE FROM business WHERE business_id = :biz';
+
+        try {
+            $conn->beginTransaction();
+            $transactionStarted = true;
+
+            foreach ($deleteStatements as $statement) {
+                $conn->executeStatement($statement, ['biz' => $businessId]);
+            }
+
+            $conn->commit();
+
+            $this->context->getLog()->info(
+                sprintf('CallbackService::purgeBusinessInstallation finished for business %s.', $businessId)
+            );
+
+            return true;
+        } catch (Throwable $e) {
+            if ($transactionStarted) {
+                try {
+                    if (method_exists($conn, 'isTransactionActive') && $conn->isTransactionActive()) {
+                        $conn->rollBack();
+                    } else {
+                        $conn->rollBack();
+                    }
+                } catch (Throwable $rollbackError) {
+                    $this->context->getLog()->warning(
+                        sprintf(
+                            'CallbackService::purgeBusinessInstallation rollback warning for business %s: %s',
+                            $businessId,
+                            $rollbackError->getMessage()
+                        )
+                    );
+                }
+            }
+
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeBusinessInstallation failed for business %s: %s',
+                    $businessId,
+                    $e->getMessage()
+                ),
+                ['exception' => $e]
+            );
+
+            return false;
+        }
     }
 
     private function isStoreScopedPlan(array $plan): bool

@@ -256,7 +256,7 @@ if (!empty($subscriptionIds)) {
 
 $callbackService = new CallbackService($context, $platformRegistry, $serviceFactory);
 
-$callbackService->purgeBusiness($businessId, !$dropTokens);
+$callbackService->purgeBusinessInstallation($businessId, !$dropTokens);
 
 echo sprintf(
     "Purged local data for business %s (%s tokens).\n",
