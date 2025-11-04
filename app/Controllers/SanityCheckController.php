@@ -32,8 +32,12 @@ class SanityCheckController extends Controller
                 if (empty($businesses)) {
                     $errors[] = sprintf('No businesses matched "%s".', $query);
                 } else {
-                    foreach ($businesses as $business) {
-                        $businessSummaries[] = $this->buildBusinessSummary($business);
+                    foreach ($businesses as $businessMatch) {
+                        $businessSummaries[] = $this->buildBusinessSummary(
+                            $businessMatch['business'],
+                            $businessMatch['matchedStores'] ?? [],
+                            (bool) ($businessMatch['matchedDirectly'] ?? false)
+                        );
                     }
                 }
             } catch (Exception $exception) {
@@ -52,18 +56,102 @@ class SanityCheckController extends Controller
      */
     private function findBusinesses(string $query): array
     {
-        $sql = 'SELECT * FROM business WHERE business_id = :exact OR name ILIKE :fuzzy ORDER BY name';
-
-        return $this->conn->fetchAllAssociative($sql, [
+        $params = [
             'exact' => $query,
             'fuzzy' => '%' . $query . '%',
-        ]);
+        ];
+
+        $sql = 'SELECT * FROM business WHERE business_id = :exact OR name ILIKE :fuzzy ORDER BY name';
+        $businessMatches = $this->conn->fetchAllAssociative($sql, $params);
+
+        $results = [];
+        foreach ($businessMatches as $business) {
+            $businessId = $business['business_id'] ?? null;
+            if ($businessId === null) {
+                continue;
+            }
+
+            $results[(string) $businessId] = [
+                'business' => $business,
+                'matchedDirectly' => true,
+                'matchedStores' => [],
+            ];
+        }
+
+        $storeSql = 'SELECT * FROM "store" WHERE store_id = :exact OR name ILIKE :fuzzy ORDER BY name';
+        $storeMatches = $this->conn->fetchAllAssociative($storeSql, $params);
+
+        if (!empty($storeMatches)) {
+            $storesByBusiness = [];
+            foreach ($storeMatches as $store) {
+                $businessId = $store['business_id'] ?? null;
+                if ($businessId === null) {
+                    continue;
+                }
+
+                $businessKey = (string) $businessId;
+                $storesByBusiness[$businessKey] ??= [];
+
+                $storeKey = isset($store['store_id']) ? (string) $store['store_id'] : md5(json_encode($store));
+                $storesByBusiness[$businessKey][$storeKey] = $store;
+            }
+
+            if (!empty($storesByBusiness)) {
+                $storeBusinessIds = array_keys($storesByBusiness);
+
+                $storeBusinesses = $this->conn->fetchAllAssociative(
+                    'SELECT * FROM business WHERE business_id IN (:business_ids)',
+                    ['business_ids' => $storeBusinessIds],
+                    ['business_ids' => ArrayParameterType::STRING]
+                );
+
+                foreach ($storeBusinesses as $business) {
+                    $businessId = (string) ($business['business_id'] ?? '');
+                    if ($businessId === '') {
+                        continue;
+                    }
+
+                    $matchedStores = array_values($storesByBusiness[$businessId]);
+
+                    if (!isset($results[$businessId])) {
+                        $results[$businessId] = [
+                            'business' => $business,
+                            'matchedDirectly' => false,
+                            'matchedStores' => $matchedStores,
+                        ];
+                    } else {
+                        $results[$businessId]['matchedStores'] = $matchedStores;
+                    }
+                }
+            }
+        }
+
+        $results = array_values($results);
+
+        usort(
+            $results,
+            static function (array $left, array $right): int {
+                $leftDirect = (bool) ($left['matchedDirectly'] ?? false);
+                $rightDirect = (bool) ($right['matchedDirectly'] ?? false);
+
+                if ($leftDirect !== $rightDirect) {
+                    return $leftDirect ? -1 : 1;
+                }
+
+                $leftName = (string) ($left['business']['name'] ?? '');
+                $rightName = (string) ($right['business']['name'] ?? '');
+
+                return strcasecmp($leftName, $rightName);
+            }
+        );
+
+        return $results;
     }
 
     /**
      * @throws Exception
      */
-    private function buildBusinessSummary(array $business): array
+    private function buildBusinessSummary(array $business, array $matchedStores = [], bool $matchedDirectly = false): array
     {
         $businessId = $business['business_id'];
         $tables = [];
@@ -119,6 +207,12 @@ class SanityCheckController extends Controller
         return [
             'business' => $business,
             'tables' => $tables,
+            'matchedStores' => $matchedStores,
+            'matchedStoreIds' => array_values(array_unique(array_filter(array_map(
+                static fn(array $store): ?string => isset($store['store_id']) ? (string) $store['store_id'] : null,
+                $matchedStores
+            )))),
+            'matchedDirectly' => $matchedDirectly,
         ];
     }
 

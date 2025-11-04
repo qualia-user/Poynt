@@ -139,9 +139,52 @@ class Api
     {
         header("HTTP/1.1 {$status} Status Code", true);
 
-        if (isset(Response::$contentType) && in_array(Response::$contentType, Response::$imageTypes)) {
-            header("Content-Type: " . Response::$contentType);
-            echo $response;
+        $contentType = Response::$contentType;
+        if (isset($contentType)) {
+            if ($contentType !== '') {
+                header('Content-Type: ' . $contentType);
+            }
+
+            $isBinaryPayload = in_array($contentType, Response::$imageTypes, true);
+            $isJsonPayload = !$isBinaryPayload && stripos($contentType, 'json') !== false;
+
+            $payload = $isBinaryPayload
+                ? $response
+                : ($isJsonPayload ? json_encode($response) : (string) $response);
+
+            if (!$isBinaryPayload) {
+                self::$lastResponse = [
+                    'status' => $status,
+                    'response' => $response,
+                    'raw' => $payload,
+                ];
+            }
+
+            if ($exit && !self::$exitDisabled) {
+                if (isset($response)) {
+                    echo $payload;
+                }
+                Response::$contentType = null;
+                self::logStatusAndExit($status, $response);
+            }
+
+            Response::$contentType = null;
+
+            return $payload;
+        }
+
+        $return = !$returnRaw ? json_encode(new Response($response)) : json_encode($response);
+
+        self::$lastResponse = [
+            'status' => $status,
+            'response' => $response,
+            'raw' => $return,
+        ];
+
+        if ($exit && !self::$exitDisabled) {
+            if (isset($response)) {
+                echo $return;
+            }
             if ($status == Response::STATUS_OK) {
                 self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent. Max Memory: " . memory_get_peak_usage(), self::getLogContext());
             } else {
@@ -149,30 +192,9 @@ class Api
                 self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent with error status '{$status}' and response '{$responseJSON}'.", self::getLogContext());
             }
             exit;
-        } else {
-            $return = !$returnRaw ? json_encode(new Response($response)) : json_encode($response);
-
-            self::$lastResponse = [
-                'status' => $status,
-                'response' => $response,
-                'raw' => $return,
-            ];
-
-            if ($exit && !self::$exitDisabled) {
-                if (isset($response)) {
-                    echo $return;
-                }
-                if ($status == Response::STATUS_OK) {
-                    self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent. Max Memory: " . memory_get_peak_usage(), self::getLogContext());
-                } else {
-                    $responseJSON = json_encode($response);
-                    self::$log->debug(basename(__FILE__) . ' (' . __LINE__ . "): Data sent with error status '{$status}' and response '{$responseJSON}'.", self::getLogContext());
-                }
-                exit;
-            }
-
-            return $return;
         }
+
+        return $return;
     }
 
     public static function disableExit(): void
