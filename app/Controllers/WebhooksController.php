@@ -539,6 +539,16 @@ class WebhooksController extends Controller
         ];
 
         foreach ($fallbackPaths as $path) {
+            if (!empty($preferredPaths)) {
+                foreach ($preferredPaths as $preferredPath) {
+                    $combinedPath = array_merge($path, (array) $preferredPath);
+                    $value = $this->resolveNestedValue($payload, $combinedPath);
+                    if (is_array($value)) {
+                        return $value;
+                    }
+                }
+            }
+
             $value = $this->resolveNestedValue($payload, $path);
             if (is_array($value)) {
                 return $value;
