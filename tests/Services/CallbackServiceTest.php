@@ -318,4 +318,66 @@ class CallbackServiceTest extends TestCase
 
         $this->assertSame('plan-pro', $method->invoke($callbackService, $plans, 'PRO'));
     }
+
+    public function testGatherResourcesForStoreFiltersItemsByStoreId(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $logger->method('info');
+        $logger->method('warning');
+        $logger->method('error');
+        $logger->method('debug');
+
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $service = new class {
+            public array $upserted = [];
+
+            public function fetchByBusinessId(?string $businessId = null): array
+            {
+                return [
+                    ['storeId' => 'store-1', 'value' => 'first'],
+                    ['storeId' => 'store-2', 'value' => 'second'],
+                    ['value' => 'no-store'],
+                    ['store' => ['id' => 'store-2', 'name' => 'Nested']],
+                    ['stores' => [
+                        ['id' => 'store-3'],
+                        ['id' => 'store-2'],
+                    ]],
+                    ['storeIds' => ['store-4', 'store-2']],
+                ];
+            }
+
+            public function upsert(array $payload): bool
+            {
+                $this->upserted[] = $payload;
+
+                return true;
+            }
+        };
+
+        $serviceFactory = $this->createMock(ServiceFactory::class);
+        $serviceFactory->method('onboardingResources')->willReturn([$service]);
+
+        $callbackService = new CallbackService(
+            $context,
+            $this->createMock(PlatformRegistry::class),
+            $serviceFactory
+        );
+
+        $result = $callbackService->gatherResourcesForStore('business-123', 'store-2');
+
+        $this->assertTrue($result);
+        $this->assertSame([
+            ['storeId' => 'store-2', 'value' => 'second'],
+            ['value' => 'no-store'],
+            ['store' => ['id' => 'store-2', 'name' => 'Nested']],
+            ['stores' => [
+                ['id' => 'store-3'],
+                ['id' => 'store-2'],
+            ]],
+            ['storeIds' => ['store-4', 'store-2']],
+        ], $service->upserted);
+    }
+
 }
