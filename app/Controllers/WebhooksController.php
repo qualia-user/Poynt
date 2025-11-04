@@ -328,6 +328,7 @@ class WebhooksController extends Controller
     {
         $inventory = $this->extractResource($payload, [
             ['inventory'],
+            ['payload'],
         ]);
 
         if ($inventory === null) {
@@ -337,6 +338,9 @@ class WebhooksController extends Controller
         }
 
         $inventory = $this->enrichResourceWithContext($inventory, $payload, ['businessId', 'storeId']);
+        if (!isset($inventory['businessId']) && isset($payload['businessId'])) {
+            $inventory['businessId'] = $payload['businessId'];
+        }
 
         $service = $this->getServiceFactory()->inventory($inventory['businessId'] ?? null);
         $service->upsert($inventory);
