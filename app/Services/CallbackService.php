@@ -461,6 +461,119 @@ class CallbackService
         return true;
     }
 
+    /**
+     * Normalize resource payloads so callers can easily access the collection items and any pagination links.
+     *
+     * @param mixed $payload
+     * @return array{items: array<int, array<string, mixed>>, links: array<int, array<string, mixed>>}
+     */
+    private function normalizeResourceItems(mixed $payload): array
+    {
+        $normalized = [
+            'items' => [],
+            'links' => [],
+        ];
+
+        if (!is_array($payload) || $payload === []) {
+            return $normalized;
+        }
+
+        $queue = [$payload];
+
+        while ($queue !== []) {
+            $current = array_shift($queue);
+
+            if (!is_array($current) || $current === []) {
+                continue;
+            }
+
+            foreach ($current as $key => $value) {
+                if ($key === 'links') {
+                    foreach ($this->coerceList($value) as $link) {
+                        if (is_array($link)) {
+                            $normalized['links'][] = $link;
+                        }
+                    }
+
+                    continue;
+                }
+
+                if ($key === 'items' || $this->isListArray($value)) {
+                    foreach ($this->coerceList($value) as $item) {
+                        if (is_array($item)) {
+                            $normalized['items'][] = $item;
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (is_array($value)) {
+                    $queue[] = $value;
+                }
+            }
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Synchronize a resource collection for the provided service, ignoring pagination links.
+     */
+    private function syncResourceCollection(string $businessId, object $service): bool
+    {
+        if (!method_exists($service, 'fetchByBusinessId') || !method_exists($service, 'upsert')) {
+            return true;
+        }
+
+        try {
+            $raw = $service->fetchByBusinessId($businessId);
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('CallbackService::syncResourceCollection failed to fetch resources for business %s: %s', $businessId, $e->getMessage()),
+                ['exception' => $e]
+            );
+
+            return false;
+        }
+
+        $normalized = $this->normalizeResourceItems($raw);
+
+        if ($normalized['links'] !== []) {
+            $this->context->getLog()->info(
+                sprintf('CallbackService::syncResourceCollection captured %d pagination link(s) for business %s.', count($normalized['links']), $businessId),
+                [
+                    'businessId' => $businessId,
+                    'links' => $normalized['links'],
+                ]
+            );
+        }
+
+        foreach ($normalized['items'] as $item) {
+            try {
+                $result = $service->upsert($item);
+            } catch (Throwable $e) {
+                $this->context->getLog()->error(
+                    sprintf('CallbackService::syncResourceCollection failed to persist resource for business %s: %s', $businessId, $e->getMessage()),
+                    ['exception' => $e, 'item' => $item]
+                );
+
+                return false;
+            }
+
+            if ($result === false) {
+                $this->context->getLog()->error(
+                    sprintf('CallbackService::syncResourceCollection failed to persist resource for business %s: upsert returned false', $businessId),
+                    ['item' => $item]
+                );
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private function ensureStoreSubscription(
         string $businessId,
         string $storeId,
@@ -553,6 +666,96 @@ class CallbackService
         );
 
         return $created !== [];
+    }
+
+    /**
+     * @param mixed $subscriptions
+     * @return array<int, array<string, mixed>>
+     */
+    private function filterSubscriptionsForStore(mixed $subscriptions, string $storeId): array
+    {
+        $normalized = $this->normalizeResourceItems($subscriptions);
+        $matching = [];
+
+        foreach ($normalized['items'] as $subscription) {
+            if (!is_array($subscription)) {
+                continue;
+            }
+
+            $candidateStoreId = $subscription['storeId']
+                ?? $subscription['store_id']
+                ?? ($subscription['store']['id'] ?? null);
+
+            if ($candidateStoreId !== null && (string) $candidateStoreId === (string) $storeId) {
+                $matching[] = $subscription;
+            }
+        }
+
+        return $matching;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>|null
+     */
+    private function getLocalSubscriptionsForStore(string $businessId, string $storeId): ?array
+    {
+        try {
+            $rows = $this->context->getConn()->fetchAllAssociative(
+                'SELECT * FROM subscription WHERE business_id = ? AND store_id = ? ORDER BY updated_at DESC',
+                [$businessId, $storeId]
+            );
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('Failed to load local subscriptions for business %s store %s: %s', $businessId, $storeId, $e->getMessage()),
+                ['exception' => $e]
+            );
+
+            return null;
+        }
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $remote
+     * @param array<int, array<string, mixed>> $local
+     */
+    private function logSubscriptionComparison(
+        string $businessId,
+        string $storeId,
+        array $remote,
+        array $local
+    ): void {
+        $this->context->getLog()->info(
+            sprintf('CallbackService::ensureStoreSubscription captured subscription comparison for business %s store %s.', $businessId, $storeId),
+            [
+                'businessId' => $businessId,
+                'storeId' => $storeId,
+                'remoteCount' => count($remote),
+                'localCount' => count($local),
+                'remoteSubscriptions' => $remote,
+                'localSubscriptions' => $local,
+            ]
+        );
+    }
+
+    private function storeHasSubscription(string $businessId, string $storeId): ?bool
+    {
+        try {
+            $result = $this->context->getConn()->fetchOne(
+                'SELECT 1 FROM subscription WHERE business_id = ? AND store_id = ? LIMIT 1',
+                [$businessId, $storeId]
+            );
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('Failed to determine subscription existence for business %s store %s: %s', $businessId, $storeId, $e->getMessage()),
+                ['exception' => $e]
+            );
+
+            return null;
+        }
+
+        return $result !== false && $result !== null;
     }
 
     private function normalizePlanParameter(mixed $value): ?string
@@ -833,6 +1036,44 @@ class CallbackService
         }
 
         return null;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<int, mixed>
+     */
+    private function coerceList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $list = $this->isListArray($value) ? $value : array_values($value);
+
+        return array_values(array_filter($list, static function ($item): bool {
+            return $item !== null;
+        }));
+    }
+
+    private function isListArray(mixed $value): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        if (function_exists('array_is_list')) {
+            return array_is_list($value);
+        }
+
+        $expectedKey = 0;
+        foreach ($value as $key => $_) {
+            if ($key !== $expectedKey) {
+                return false;
+            }
+            $expectedKey++;
+        }
+
+        return true;
     }
 
     public function purgeBusinessInstallation(string $businessId, bool $preserveTokens = true): bool
