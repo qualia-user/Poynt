@@ -206,6 +206,80 @@ class HookService
         }
     }
 
+    /**
+     * Delete all hooks for a business using the Poynt API.
+     *
+     * @param string|null $businessId
+     * @return bool True when all deletions succeed, false otherwise.
+     */
+    public function deleteAllByBusinessId(?string $businessId = null): bool
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+        if (!$businessId) {
+            return false;
+        }
+
+        $hooks = $this->fetchByBusinessId($businessId);
+        if ($hooks === false) {
+            return false;
+        }
+
+        if (empty($hooks)) {
+            $this->context->getLog()->info(
+                sprintf('HookService::deleteAllByBusinessId: no hooks to delete for business %s', $businessId)
+            );
+            return true;
+        }
+
+        $tokenService = new TokenService($this->context);
+        $accessToken = $tokenService->getMerchantToken($businessId);
+
+        $allDeleted = true;
+        foreach ($hooks as $hook) {
+            if (!is_array($hook) || empty($hook['id'])) {
+                continue;
+            }
+
+            $hookId = $hook['id'];
+
+            try {
+                $this->httpClient->delete(
+                    self::POYNT_ENDPOINT . '/' . rawurlencode($hookId),
+                    [
+                        'headers' => [
+                            'Authorization' => 'Bearer ' . $accessToken,
+                        ],
+                        'query' => [
+                            'businessId' => $businessId,
+                        ],
+                    ]
+                );
+
+                $this->context->getLog()->info(
+                    sprintf(
+                        'HookService::deleteAllByBusinessId: deleted hook %s for business %s',
+                        $hookId,
+                        $businessId
+                    )
+                );
+            } catch (BadResponseException|GuzzleException $e) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'HookService::deleteAllByBusinessId: failed deleting hook %s for business %s: %s',
+                        $hookId,
+                        $businessId,
+                        $e->getMessage()
+                    )
+                );
+                $allDeleted = false;
+            }
+        }
+
+        return $allDeleted;
+    }
+
     private function fetchDeliveries(string $businessId, string $hookId, string $accessToken): array
     {
         try {
