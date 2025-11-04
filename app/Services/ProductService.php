@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
+use App\Services\Support\PaginatedRequest;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -201,14 +203,33 @@ class ProductService
         $accessToken = $tokenService->getMerchantToken($businessId);
 
         try {
-            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/products', [
+            $url = self::POYNT_ENDPOINT . '/' . $businessId . '/products';
+            $requestOptions = [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],
-            ]);
+            ];
+
+            $response = $this->httpClient->get($url, $requestOptions);
 
             $data = json_decode($response->getBody(), true);
-            return $data ?? false;
+            if (!is_array($data)) {
+                return false;
+            }
+
+            $data = PaginatedRequest::collect($this->httpClient, $data, $url, $requestOptions, 'products');
+
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'ProductService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'products',
+                    'payload' => $data,
+                ]
+            );
+
+            return $data;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 'ProductService::fetchByBusinessId: ' . $e->getMessage()

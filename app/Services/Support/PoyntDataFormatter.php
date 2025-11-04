@@ -65,13 +65,31 @@ class PoyntDataFormatter
         }
 
         if (is_string($value)) {
-            $value = strtolower($value);
-            if ($value === 'true') {
+            $value = trim(strtolower($value));
+
+            if ($value === '') {
+                return null;
+            }
+
+            if ($value === 'true' || $value === 't' || $value === 'yes') {
                 return true;
             }
-            if ($value === 'false') {
+
+            if ($value === 'false' || $value === 'f' || $value === 'no') {
                 return false;
             }
+
+            if ($value === '1') {
+                return true;
+            }
+
+            if ($value === '0') {
+                return false;
+            }
+        }
+
+        if (is_numeric($value)) {
+            return (int) $value === 1;
         }
 
         return (bool) $value;

@@ -9,10 +9,8 @@ use App\Core\Api;
 use App\Core\Context;
 use App\Http\GuzzleClientFactory;
 use App\Services\BackgroundJobService;
-use App\Services\CustomPDOHandler;
+use App\Services\Support\LoggerFactory;
 use Doctrine\DBAL\DriverManager;
-use Monolog\Logger;
-use Ramsey\Uuid\Uuid;
 
 // Setup database connection
 $connectionParams = [
@@ -28,15 +26,11 @@ $connectionParams = [
 $conn = DriverManager::getConnection($connectionParams);
 $conn->executeStatement("SET TIME ZONE '" . ConfigApp::$timezone . "'");
 
+$logConnection = DriverManager::getConnection($connectionParams);
+$logConnection->executeStatement("SET TIME ZONE '" . ConfigApp::$timezone . "'");
+
 // Logger setup
-$logHandler = new CustomPDOHandler($conn);
-$log = new Logger('app-poynt-log');
-$log->pushHandler($logHandler);
-$requestId = Uuid::uuid4()->toString();
-$log->pushProcessor(function ($record) use ($requestId) {
-    $record['context']['request_id'] = $requestId;
-    return $record;
-});
+[$log, $requestId] = LoggerFactory::create($conn, $logConnection);
 
 $api = new Api('', $log, $requestId);
 $httpClientFactory = new GuzzleClientFactory();

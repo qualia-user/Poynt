@@ -3,7 +3,10 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
+use App\Services\Support\PaginatedRequest;
 use App\Services\Support\PoyntDataFormatter as Format;
+use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -45,18 +48,49 @@ class OrderService
         }
 
         try {
-            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/orders', [
+            $url = self::POYNT_ENDPOINT . '/' . $businessId . '/orders';
+            $requestOptions = [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],
-            ]);
+            ];
+
+            $response = $this->httpClient->get($url, $requestOptions);
 
             $data = json_decode($response->getBody(), true);
-            if (isset($data['orders']) && is_array($data['orders'])) {
-                return $data['orders'];
+            if (!is_array($data)) {
+                return false;
             }
 
-            return is_array($data) ? $data : false;
+            $data = PaginatedRequest::collect($this->httpClient, $data, $url, $requestOptions, 'orders');
+
+            if (isset($data['orders']) && is_array($data['orders'])) {
+                $payload = $data['orders'];
+
+                FetchResponseLogger::info(
+                    $this->context->getLog(),
+                    'OrderService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'orders',
+                        'payload' => $payload,
+                    ]
+                );
+
+                return $payload;
+            }
+
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'OrderService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'orders',
+                    'payload' => $data,
+                ]
+            );
+
+            return $data;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 sprintf('OrderService::fetchByBusinessId: %s', $e->getMessage())
@@ -73,7 +107,12 @@ class OrderService
      */
     public function upsert(array $orderData): bool
     {
-        if (!isset($orderData['id'], $orderData['businessId'])) {
+        $businessId = $this->coalesceValue($orderData, [
+            ['businessId'],
+            ['context', 'businessId'],
+        ]);
+
+        if (!isset($orderData['id']) || $businessId === null) {
             $this->context->getLog()->error(
                 'OrderService::upsert: missing required order fields (id or businessId)'
             );
@@ -81,11 +120,22 @@ class OrderService
         }
 
         $orderId = $orderData['id'];
-        $businessId = $orderData['businessId'];
-        $storeId = $orderData['storeId'] ?? null;
-        $status = $orderData['status'] ?? null;
-        $fulfillmentStatus = $orderData['fulfillmentStatus'] ?? null;
-        $transactionStatusSummary = $orderData['transactionStatusSummary'] ?? null;
+        $storeId = $this->coalesceValue($orderData, [
+            ['storeId'],
+            ['context', 'storeId'],
+        ]);
+        $status = $this->coalesceValue($orderData, [
+            ['status'],
+            ['statuses', 'status'],
+        ]);
+        $fulfillmentStatus = $this->coalesceValue($orderData, [
+            ['fulfillmentStatus'],
+            ['statuses', 'fulfillmentStatus'],
+        ]);
+        $transactionStatusSummary = $this->coalesceValue($orderData, [
+            ['transactionStatusSummary'],
+            ['statuses', 'transactionStatusSummary'],
+        ]);
 
         $currency = $this->coalesceValue($orderData, [
             ['currency'],
@@ -134,14 +184,22 @@ class OrderService
         ]);
 
         $customerUserId = Format::optionalInt($orderData['customerUserId'] ?? $orderData['customer']['userId'] ?? null);
-        $employeeUserId = Format::optionalInt($orderData['employeeUserId'] ?? null);
+        $employeeUserId = Format::optionalInt($orderData['employeeUserId'] ?? $orderData['context']['employeeUserId'] ?? null);
         $storeDeviceId = $this->coalesceValue($orderData, [
             ['storeDeviceId'],
             ['deviceId'],
             ['context', 'storeDeviceId'],
         ]);
-        $source = $orderData['source'] ?? null;
-        $sourceApp = $orderData['sourceApp'] ?? $orderData['sourceApplication'] ?? null;
+        $source = $this->coalesceValue($orderData, [
+            ['source'],
+            ['context', 'source'],
+        ]);
+        $sourceApp = $this->coalesceValue($orderData, [
+            ['sourceApp'],
+            ['sourceApplication'],
+            ['context', 'sourceApp'],
+            ['context', 'sourceApplication'],
+        ]);
 
         $taxExempted = Format::optionalBool($orderData['taxExempted'] ?? null);
         $valid = Format::optionalBool($orderData['valid'] ?? null);
@@ -160,6 +218,47 @@ class OrderService
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
         try {
+            $params = [
+                'orderId' => $orderId,
+                'businessId' => $businessId,
+                'storeId' => $storeId,
+                'currency' => $currency,
+                'status' => $status,
+                'fulfillmentStatus' => $fulfillmentStatus,
+                'transactionStatusSummary' => $transactionStatusSummary,
+                'subtotalMinor' => $subtotalMinor,
+                'discountTotalMinor' => $discountMinor,
+                'taxTotalMinor' => $taxTotalMinor,
+                'tipTotalMinor' => $tipTotalMinor,
+                'feeTotalMinor' => $feeTotalMinor,
+                'shippingTotalMinor' => $shippingTotalMinor,
+                'netTotalMinor' => $netTotalMinor,
+                'taxExempted' => $taxExempted,
+                'valid' => $valid,
+                'accepted' => $accepted,
+                'notes' => $notes,
+                'customerUserId' => $customerUserId,
+                'employeeUserId' => $employeeUserId,
+                'storeDeviceId' => $storeDeviceId,
+                'source' => $source,
+                'sourceApp' => $sourceApp,
+                'customerJson' => $customerJson,
+                'transactionsJson' => $transactionsJson,
+                'amountsJson' => $amountsJson,
+                'contextJson' => $contextJson,
+                'rawPayload' => $rawPayload,
+                'createdAtExt' => $createdAtExt,
+                'updatedAtExt' => $updatedAtExt,
+                'createdAt' => $now,
+                'updatedAt' => $now,
+            ];
+
+            $types = [
+                'taxExempted' => $taxExempted === null ? ParameterType::NULL : ParameterType::BOOLEAN,
+                'valid' => $valid === null ? ParameterType::NULL : ParameterType::BOOLEAN,
+                'accepted' => $accepted === null ? ParameterType::NULL : ParameterType::BOOLEAN,
+            ];
+
             $this->context->getConn()->executeStatement(
                 'INSERT INTO "order" (
                     order_id, business_id, store_id, currency,
@@ -214,40 +313,8 @@ class OrderService
                     created_at_ext = EXCLUDED.created_at_ext,
                     updated_at_ext = EXCLUDED.updated_at_ext,
                     updated_at = EXCLUDED.updated_at',
-                [
-                    'orderId' => $orderId,
-                    'businessId' => $businessId,
-                    'storeId' => $storeId,
-                    'currency' => $currency,
-                    'status' => $status,
-                    'fulfillmentStatus' => $fulfillmentStatus,
-                    'transactionStatusSummary' => $transactionStatusSummary,
-                    'subtotalMinor' => $subtotalMinor,
-                    'discountTotalMinor' => $discountMinor,
-                    'taxTotalMinor' => $taxTotalMinor,
-                    'tipTotalMinor' => $tipTotalMinor,
-                    'feeTotalMinor' => $feeTotalMinor,
-                    'shippingTotalMinor' => $shippingTotalMinor,
-                    'netTotalMinor' => $netTotalMinor,
-                    'taxExempted' => $taxExempted,
-                    'valid' => $valid,
-                    'accepted' => $accepted,
-                    'notes' => $notes,
-                    'customerUserId' => $customerUserId,
-                    'employeeUserId' => $employeeUserId,
-                    'storeDeviceId' => $storeDeviceId,
-                    'source' => $source,
-                    'sourceApp' => $sourceApp,
-                    'customerJson' => $customerJson,
-                    'transactionsJson' => $transactionsJson,
-                    'amountsJson' => $amountsJson,
-                    'contextJson' => $contextJson,
-                    'rawPayload' => $rawPayload,
-                    'createdAtExt' => $createdAtExt,
-                    'updatedAtExt' => $updatedAtExt,
-                    'createdAt' => $now,
-                    'updatedAt' => $now,
-                ]
+                $params,
+                $types
             );
 
             $this->upsertItems($orderId, $orderData['items'] ?? []);

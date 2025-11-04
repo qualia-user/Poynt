@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -55,6 +56,16 @@ class StoreService
 
             $data = json_decode($response->getBody(), true);
             if (is_array($data)) {
+                FetchResponseLogger::info(
+                    $this->context->getLog(),
+                    'StoreService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'stores',
+                        'payload' => $data,
+                    ]
+                );
+
                 return $data;
             }
         } catch (GuzzleException $e) {

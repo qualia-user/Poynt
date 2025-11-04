@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -59,7 +60,7 @@ class BusinessService {
         try {
             // 4) See if a business row with this business_id already exists
             $existing = $this->context->getConn()->fetchAssociative(
-                'SELECT business_id FROM business WHERE business_id = ?',
+                'SELECT business_id FROM business WHERE business_id = ? AND active = TRUE ORDER BY updated_at DESC LIMIT 1',
                 [$businessId]
             );
 
@@ -153,7 +154,19 @@ class BusinessService {
             return false;
         }
 
-        return [$business];
+        $payload = [$business];
+
+        FetchResponseLogger::info(
+            $this->context->getLog(),
+            'BusinessService::fetchByBusinessId response',
+            [
+                'businessId' => $businessId,
+                'entity' => 'businesses',
+                'payload' => $payload,
+            ]
+        );
+
+        return $payload;
     }
 
     /**
@@ -221,7 +234,12 @@ class BusinessService {
         }
 
         $sql = <<<SQL
-        SELECT * FROM business WHERE business_id = ?
+        SELECT *
+          FROM business
+         WHERE business_id = ?
+           AND active = TRUE
+         ORDER BY updated_at DESC
+         LIMIT 1
         SQL;
 
         $success = $this->context->getConn()->fetchAssociative($sql, [$businessId]);

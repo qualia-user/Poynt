@@ -13,7 +13,7 @@
     <ConnectionString>User Id=postgres;Host=localhost;Port=5432;Database=oauth_integration;Unicode=True;Connection Timeout=15;Default Command Timeout=30;Integrated Security=False</ConnectionString>
     <Database>oauth_integration</Database>
   </Connection>
-  <Views ShowAdditionalViews="False" IsLayoutActiveAttribute="True" MainViewAttribute="Code" MainViewScale="50">
+  <Views ShowAdditionalViews="False" IsLayoutActiveAttribute="True" MainViewAttribute="Code" MainViewScale="44">
     <View Name="Code" Active="True" Visible="True">
       <Data />
     </View>

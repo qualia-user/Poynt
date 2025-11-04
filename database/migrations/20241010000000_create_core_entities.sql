@@ -263,13 +263,19 @@ CREATE INDEX IF NOT EXISTS idx_tax_business ON tax (business_id, active);
 CREATE TABLE IF NOT EXISTS paylink (
     paylink_id VARCHAR(255) PRIMARY KEY,
     business_id VARCHAR(255) NOT NULL,
+    url TEXT,
+    vanity_url TEXT,
     domain VARCHAR(255),
+    title TEXT,
+    description TEXT,
     status VARCHAR(32),
     amount_minor BIGINT,
     currency VARCHAR(3),
     metadata JSONB NOT NULL DEFAULT '{}',
+    expires_at_ext TIMESTAMPTZ,
     created_at_ext TIMESTAMPTZ,
     updated_at_ext TIMESTAMPTZ,
+    raw_payload JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

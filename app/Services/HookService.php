@@ -3,8 +3,10 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
 
 class HookService
@@ -13,7 +15,7 @@ class HookService
     private ClientInterface $httpClient;
     private ?string $businessId = null;
 
-    const POYNT_ENDPOINT = 'https://services.poynt.net/businesses';
+    const POYNT_ENDPOINT = 'https://services.poynt.net/hooks';
 
     public function __construct(Context $context, ?string $businessId = null, ?ClientInterface $httpClient = null)
     {
@@ -125,14 +127,24 @@ class HookService
         $accessToken = $tokenService->getMerchantToken($businessId);
 
         try {
-            $response = $this->httpClient->get(self::POYNT_ENDPOINT . '/' . $businessId . '/hooks', [
+            $response = $this->httpClient->get(self::POYNT_ENDPOINT, [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $accessToken,
                 ],
+                'query' => [
+                    'businessId' => $businessId,
+                ],
             ]);
 
-            $hooks = json_decode($response->getBody(), true);
-            if (!is_array($hooks)) {
+            $hooksPayload = json_decode($response->getBody(), true);
+            $hooks = $this->normalizeHooks($hooksPayload);
+            if ($hooks === false) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'HookService::fetchByBusinessId: unexpected response while loading hooks for business %s',
+                        $businessId
+                    )
+                );
                 return false;
             }
 
@@ -147,7 +159,45 @@ class HookService
                 }
             }
 
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'HookService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'hooks',
+                    'payload' => $hooks,
+                ]
+            );
+
             return $hooks;
+        } catch (BadResponseException $e) {
+            $response = $e->getResponse();
+            if ($response !== null && $response->getStatusCode() === 404) {
+                $this->context->getLog()->info(
+                    sprintf(
+                        'HookService::fetchByBusinessId: GET /hooks?businessId=%s returned 404, treating as no hooks',
+                        $businessId
+                    )
+                );
+
+                FetchResponseLogger::info(
+                    $this->context->getLog(),
+                    'HookService::fetchByBusinessId response',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'hooks',
+                        'payload' => [],
+                    ]
+                );
+
+                return [];
+            }
+
+            $this->context->getLog()->error(
+                'HookService::fetchByBusinessId: ' . $e->getMessage()
+            );
+
+            return false;
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 'HookService::fetchByBusinessId: ' . $e->getMessage()
@@ -160,22 +210,68 @@ class HookService
     {
         try {
             $response = $this->httpClient->get(
-                self::POYNT_ENDPOINT . '/' . $businessId . '/hooks/' . $hookId . '/deliveries',
+                self::POYNT_ENDPOINT . '/' . $hookId . '/deliveries',
                 [
                     'headers' => [
                         'Authorization' => 'Bearer ' . $accessToken,
+                    ],
+                    'query' => [
+                        'businessId' => $businessId,
                     ],
                 ]
             );
 
             $payload = json_decode($response->getBody(), true);
             return $this->normalizeDeliveries($payload, $businessId, $hookId);
+        } catch (BadResponseException $e) {
+            $response = $e->getResponse();
+            if ($response !== null && $response->getStatusCode() === 404) {
+                $this->context->getLog()->info(
+                    sprintf(
+                        'HookService::fetchDeliveries: GET /hooks/%s/deliveries?businessId=%s returned 404, treating as none',
+                        $hookId,
+                        $businessId
+                    )
+                );
+
+                return [];
+            }
+
+            $this->context->getLog()->error(
+                sprintf('HookService::fetchDeliveries: failed for hook %s: %s', $hookId, $e->getMessage())
+            );
+
+            return [];
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
                 sprintf('HookService::fetchDeliveries: failed for hook %s: %s', $hookId, $e->getMessage())
             );
             return [];
         }
+    }
+
+    private function normalizeHooks(mixed $payload): array|false
+    {
+        if (!is_array($payload)) {
+            return false;
+        }
+
+        if (array_is_list($payload)) {
+            return array_values(array_filter($payload, 'is_array'));
+        }
+
+        $candidateKeys = ['hooks', 'items', 'data', 'results'];
+        foreach ($candidateKeys as $key) {
+            if (isset($payload[$key]) && is_array($payload[$key])) {
+                return array_values(array_filter($payload[$key], 'is_array'));
+            }
+        }
+
+        if (isset($payload['_embedded']) && is_array($payload['_embedded'])) {
+            return $this->normalizeHooks($payload['_embedded']);
+        }
+
+        return false;
     }
 
     private function normalizeDeliveries(mixed $payload, string $businessId, string $hookId): array

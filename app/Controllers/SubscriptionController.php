@@ -70,7 +70,7 @@ class SubscriptionController extends Controller
 
         return [
             'subscriptionId' => $subscriptionId,
-            'status' => 'trialing',
+            'status' => 'free_trial',
         ];
     }
 

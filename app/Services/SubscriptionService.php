@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Config\ConfigApp;
 use App\Core\Context;
 use App\Core\Response;
+use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
 use DateInterval;
 //use DateMalformedIntervalStringException;
@@ -12,12 +13,17 @@ use DateInterval;
 use DateTime;
 use DateTimeZone;
 use Exception;
+use InvalidArgumentException;
+use Doctrine\DBAL\ParameterType;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use JsonException;
 use Ramsey\Uuid\Uuid;
 use RuntimeException;
+use Throwable;
+use function array_is_list;
+use function str_starts_with;
 
 class SubscriptionService
 {
@@ -56,21 +62,43 @@ class SubscriptionService
      * @return array|null  List of plans (decoded JSON). Example keys: ['planId'=>'...', 'name'=>'...', 'price'=>..., …]
      * @throws RuntimeException on HTTP or decoding error
      */
-    public function fetchPlans(string $appAccessToken): ?array
+    public function fetchPlans(
+        string $appAccessToken,
+        ?string $currency = null,
+        ?string $businessId = null,
+        ?string $status = null
+    ): ?array
     {
         try {
-            $response = $this->http->get(self::POYNT_BILLING_BASE . '/' . ConfigApp::$orgId . '/apps/urn:aid:' . ConfigApp::$appId . '/plans', [
+            $query = array_filter([
+                'currency'   => $currency,
+                'businessId' => $businessId,
+                'status'     => $status,
+            ], static fn($value) => $value !== null && $value !== '');
+
+            $options = [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $appAccessToken,
                     'Accept'        => 'application/json',
-                ]
-            ]);
+                    'Content-Type'  => 'application/json',
+                ],
+            ];
+
+            if ($query !== []) {
+                $options['query'] = $query;
+            }
+
+            $response = $this->http->get($this->buildAppResourceUrl('plans'), $options);
             $body = (string) $response->getBody();
             $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
 
             return $decoded;
         } catch (JsonException $e) {
-            $this->context->getLog()->error("Error parsing plans response: %s. Body: %s" . $e->getMessage());
+            $this->context->getLog()->error(sprintf(
+                'Error parsing plans response: %s. Body: %s',
+                $e->getMessage(),
+                $body ?? ''
+            ));
 
             return null;
         } catch (RequestException $e) {
@@ -93,9 +121,14 @@ class SubscriptionService
      * @param string $appAccessToken
      * @return array|null
      */
-    public function fetchApplicationSubscriptionPlans(string $appAccessToken): ?array
+    public function fetchApplicationSubscriptionPlans(
+        string $appAccessToken,
+        ?string $currency = null,
+        ?string $businessId = null,
+        ?string $status = null
+    ): ?array
     {
-        return $this->fetchPlans($appAccessToken);
+        return $this->fetchPlans($appAccessToken, $currency, $businessId, $status);
     }
 
     /**
@@ -115,20 +148,14 @@ class SubscriptionService
         ?string $deviceId = null,
         ?string $status = null
     ): ?array {
-        $orgId = ConfigApp::$orgId;
-        $appId = 'urn:aid:' . ConfigApp::$appId;
-        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions";
+        $endpoint = $this->buildAppResourceUrl('subscriptions');
 
-        $query = ['businessId' => $businessId];
-        if ($storeId) {
-            $query['storeId'] = $storeId;
-        }
-        if ($deviceId) {
-            $query['deviceId'] = $deviceId;
-        }
-        if ($status) {
-            $query['status'] = $status;
-        }
+        $query = array_filter([
+            'businessId' => $businessId,
+            'storeId'    => $storeId,
+            'deviceId'   => $deviceId,
+            'status'     => $status,
+        ], static fn($value) => $value !== null && $value !== '');
 
         try {
             $response = $this->http->get($endpoint, [
@@ -321,7 +348,7 @@ class SubscriptionService
                 'biz'    => $businessId,
                 'store'  => $storeId,
                 'plan'   => $trialPlanId,
-                'status' => 'trialing',
+                'status' => 'free_trial',
                 'phase'  => 'trial',
                 'tstart' => $now->format('Y-m-d H:i:sP'),
                 'tend'   => $trialEnd->format('Y-m-d H:i:sP'),
@@ -342,7 +369,7 @@ class SubscriptionService
     /**
      * Creates a new paid subscription on Poynt (POST) and upserts the result into local DB.
      *
-     * @param string $appAccessToken App-level OAuth token
+     * @param string $merchantAccessToken Merchant-level OAuth token
      * @param string $businessId Poynt business ID
      * @param string $storeId Poynt store ID
      * @param string $planId Poynt plan ID (e.g. "plan_basic_monthly")
@@ -354,16 +381,24 @@ class SubscriptionService
      * @throws GuzzleException
      */
     public function createSubscription(
-        string      $accessToken,
+        string      $merchantAccessToken,
         string      $businessId,
         string      $storeId,
         string      $planId,
         bool        $replaceV2 = false,
         ?string     $startAt = null
     ): array {
-        $orgId = ConfigApp::$orgId;
-        $appId = 'urn:aid:' . ConfigApp::$appId;
-        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions";
+        $orgId = ConfigApp::$orgId ?? '';
+        if ($orgId === '') {
+            throw new RuntimeException('ConfigApp::$orgId must be configured to create subscriptions.');
+        }
+        if ($merchantAccessToken === '') {
+            $this->context->getLog()->error('Cannot create subscription without a merchant access token.');
+
+            return [];
+        }
+
+        $endpoint = $this->buildAppResourceUrl('subscriptions');
 
         // If startAt is not provided, use current UTC
         $timestamp = $startAt
@@ -381,22 +416,38 @@ class SubscriptionService
         try {
             $response = $this->http->post($endpoint, [
                 'headers' => [
-                    'Authorization' => 'Bearer ' . $appAccessToken,
+                    'Authorization' => 'Bearer ' . $merchantAccessToken,
                     'Accept'        => 'application/json',
                     'Content-Type'  => 'application/json',
                 ],
                 'json' => $body,
             ]);
-            $respData = json_decode((string)$response->getBody(), true);
+            $respData = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
         } catch (RequestException $e) {
             $msg = $e->hasResponse()
                 ? $e->getResponse()->getBody()->getContents()
                 : $e->getMessage();
             $this->context->getLog()->error("Poynt CREATE subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+
+            return [];
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error("Poynt CREATE subscription failed: " . $e->getMessage());
+
+            return [];
+        } catch (JsonException $e) {
+            $this->context->getLog()->error('Poynt CREATE subscription returned invalid JSON: ' . $e->getMessage());
+
+            return [];
+        }
+
+        if (!is_array($respData)) {
+            $this->context->getLog()->warning('Poynt CREATE subscription returned unexpected payload type.');
+
+            return [];
         }
 
         // Overwrite local row (which likely already exists as a “trial”) with Poynt’s data
-        $this->upsertLocalSubscription($respData);
+        $this->upsertLocalSubscription($respData, $storeId);
 
         return $respData;
     }
@@ -407,52 +458,284 @@ class SubscriptionService
 
     /**
      * Fetches all subscriptions for a given businessId from Poynt,
-     * upserts each into the local `subscription` table, and returns the list.
+     * preferring a stored merchant access token when available, then upserts
+     * each into the local `subscription` table, and returns the list.
      *
-     * @param string $appAccessToken  App-level OAuth token
+     * @param string $appAccessToken  App-level OAuth token (used when no merchant token is available or authorized)
      * @param string $businessId      Poynt business ID
-     * @return array  List of subscription objects (decoded JSON)
+     * @return array<int, array<string, mixed>>|null  List of subscription objects (decoded JSON) or null when request fails
      * @throws RuntimeException on HTTP/decoding error
      */
     public function fetchSubscriptions(
         string $appAccessToken,
-        string $businessId
-    ): array {
-        $orgId = ConfigApp::$orgId;
-        $appId = 'urn:aid:' . ConfigApp::$appId;
-        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions";
-
-        $respList = [];
-
-        try {
-            $response = $this->http->get($endpoint, [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $appAccessToken,
-                    'Accept'        => 'application/json',
-                ],
-                'query' => [
-                    'businessId' => $businessId,
-                ],
-            ]);
-            $decoded = json_decode((string)$response->getBody(), true);
-            if (is_array($decoded)) {
-                $respList = $decoded;
-            }
-        } catch (RequestException $e) {
-            $msg = $e->hasResponse()
-                ? $e->getResponse()->getBody()->getContents()
-                : $e->getMessage();
-            $this->context->getLog()->error("Poynt GET subscription failed: " . $msg . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
-        } catch (GuzzleException $e) {
-            $this->context->getLog()->error("Poynt GET subscription failed: ". json_encode($e));
+        string $businessId,
+        ?string $storeId = null,
+        ?string $deviceId = null,
+        ?string $status = null
+    ): ?array {
+        if ($businessId === '') {
+            throw new InvalidArgumentException('Business ID must be provided to fetch subscriptions.');
         }
 
+        $query = array_filter([
+            'businessId' => $businessId,
+            'storeId'    => $storeId,
+            'deviceId'   => $deviceId,
+            'status'     => $status,
+        ], static fn($value) => $value !== null && $value !== '');
+
+        $decoded = null;
+        $attemptedMerchantFetch = false;
+
+        $merchantToken = $this->getStoredMerchantToken($businessId);
+        if ($merchantToken !== null) {
+            $attemptedMerchantFetch = true;
+
+            try {
+                $decoded = $this->performSubscriptionFetch($merchantToken, $query);
+            } catch (RequestException $merchantException) {
+                $response = $merchantException->getResponse();
+                if ($response !== null && $response->getStatusCode() === 401) {
+                    $this->context->getLog()->info(
+                        sprintf(
+                            'Merchant token unauthorized for business %s; retrying subscription fetch with app token',
+                            $businessId
+                        )
+                    );
+                } else {
+                    $this->logSubscriptionRequestException(
+                        $merchantException,
+                        'Poynt GET subscription with merchant token failed'
+                    );
+                }
+            } catch (JsonException $merchantException) {
+                $this->context->getLog()->error(
+                    'Poynt GET subscription with merchant token returned invalid JSON: ' .
+                    $merchantException->getMessage()
+                );
+            } catch (GuzzleException $merchantException) {
+                $this->context->getLog()->error(
+                    'Poynt GET subscription with merchant token failed: ' .
+                    $merchantException->getMessage()
+                );
+            }
+        }
+
+        if ($decoded === null) {
+            try {
+                $decoded = $this->performSubscriptionFetch($appAccessToken, $query);
+            } catch (RequestException $e) {
+                if (!$attemptedMerchantFetch) {
+                    $decoded = $this->retryFetchSubscriptionsWithMerchantToken($businessId, $query, $e);
+                }
+
+                if ($decoded === null) {
+                    $this->logSubscriptionRequestException($e, 'Poynt GET subscription failed');
+
+                    return null;
+                }
+            } catch (JsonException $e) {
+                $this->context->getLog()->error('Poynt GET subscription returned invalid JSON: ' . $e->getMessage());
+
+                return null;
+            } catch (GuzzleException $e) {
+                $this->context->getLog()->error('Poynt GET subscription failed: ' . $e->getMessage());
+
+                return null;
+            }
+        }
+
+        $respList = $this->normalizeSubscriptionList($decoded);
+
         // Upsert each subscription into local DB
-        foreach ($respList as $sub) {
-            $this->upsertLocalSubscription($sub);
+        foreach ($respList as $index => $sub) {
+            if (!is_array($sub)) {
+                $this->context->getLog()->warning(
+                    sprintf('Skipping non-array subscription payload at index %s', (string) $index)
+                );
+                continue;
+            }
+
+            $resolvedStoreId = $sub['storeId'] ?? $storeId ?? $this->storeId;
+            $this->upsertLocalSubscription($sub, $resolvedStoreId);
         }
 
         return $respList;
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     * @return array<mixed>
+     * @throws RequestException
+     * @throws GuzzleException
+     * @throws JsonException
+     */
+    private function performSubscriptionFetch(string $accessToken, array $query): array
+    {
+        $endpoint = $this->buildAppResourceUrl('subscriptions');
+
+        $response = $this->http->get($endpoint, [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $accessToken,
+                'Accept'        => 'application/json',
+            ],
+            'query' => $query,
+        ]);
+
+        return json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     */
+    private function retryFetchSubscriptionsWithMerchantToken(
+        string $businessId,
+        array $query,
+        RequestException $exception
+    ): ?array {
+        if (!$this->shouldRetryWithMerchantToken($exception)) {
+            return null;
+        }
+
+        $merchantToken = $this->getStoredMerchantToken($businessId);
+        if ($merchantToken === null) {
+            return null;
+        }
+
+        $this->context->getLog()->info(
+            sprintf('Retrying subscription fetch with merchant token for business %s', $businessId)
+        );
+
+        try {
+            return $this->performSubscriptionFetch($merchantToken, $query);
+        } catch (RequestException $retryException) {
+            $this->logSubscriptionRequestException($retryException, 'Poynt GET subscription retry failed');
+        } catch (JsonException $retryException) {
+            $this->context->getLog()->error('Poynt GET subscription retry returned invalid JSON: ' . $retryException->getMessage());
+        } catch (GuzzleException $retryException) {
+            $this->context->getLog()->error('Poynt GET subscription retry failed: ' . $retryException->getMessage());
+        }
+
+        return null;
+    }
+
+    private function getStoredMerchantToken(string $businessId): ?string
+    {
+        $tokenService = new TokenService($this->context);
+
+        try {
+            $merchantToken = $tokenService->getMerchantToken($businessId);
+        } catch (\Throwable $tokenError) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'SubscriptionService::fetchSubscriptions failed to load merchant token for business %s: %s',
+                    $businessId,
+                    $tokenError->getMessage()
+                )
+            );
+
+            return null;
+        }
+
+        if (!is_string($merchantToken) || $merchantToken === '') {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'SubscriptionService::fetchSubscriptions has no merchant token stored for business %s; cannot retry.',
+                    $businessId
+                )
+            );
+
+            return null;
+        }
+
+        return $merchantToken;
+    }
+
+    private function shouldRetryWithMerchantToken(RequestException $exception): bool
+    {
+        $response = $exception->getResponse();
+        if ($response === null || $response->getStatusCode() !== 401) {
+            return false;
+        }
+
+        $bodyStream = $response->getBody();
+        $body = (string) $bodyStream;
+        if ($bodyStream->isSeekable()) {
+            $bodyStream->rewind();
+        }
+        if ($body === '') {
+            return false;
+        }
+
+        try {
+            $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $jsonException) {
+            $this->context->getLog()->debug(
+                'Failed to decode subscription error response for retry decision: ' . $jsonException->getMessage()
+            );
+
+            return false;
+        }
+
+        $messages = array_filter([
+            $payload['developerMessage'] ?? null,
+            $payload['message'] ?? null,
+        ], 'is_string');
+
+        foreach ($messages as $message) {
+            if (stripos($message, 'businessid must be present in the jwt') !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param mixed $payload
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalizeSubscriptionList(mixed $payload): array
+    {
+        if (!is_array($payload)) {
+            return [];
+        }
+
+        $knownListKeys = ['subscriptions', 'items', 'list'];
+
+        foreach ($knownListKeys as $key) {
+            if (isset($payload[$key]) && is_array($payload[$key])) {
+                return $payload[$key];
+            }
+        }
+
+        if (array_is_list($payload)) {
+            return $payload;
+        }
+
+        $this->context->getLog()->warning(
+            'SubscriptionService::fetchSubscriptions received unexpected payload keys: ' .
+            implode(',', array_map('strval', array_keys($payload)))
+        );
+
+        return [];
+    }
+
+    private function logSubscriptionRequestException(RequestException $exception, string $prefix): void
+    {
+        $msg = $exception->hasResponse()
+            ? (string) $exception->getResponse()->getBody()
+            : $exception->getMessage();
+
+        $this->context->getLog()->error(
+            sprintf(
+                '%s: %s. Code: %s. Whole object: %s',
+                $prefix,
+                $msg,
+                (string) $exception->getCode(),
+                json_encode($exception)
+            )
+        );
     }
 
     /**
@@ -495,6 +778,18 @@ class SubscriptionService
 
         $subscriptions = $this->fetchSubscriptions($appToken, $businessId);
 
+        if (is_array($subscriptions)) {
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'SubscriptionService::fetchByBusinessId response',
+                [
+                    'businessId' => $businessId,
+                    'entity' => 'subscriptions',
+                    'payload' => $subscriptions,
+                ]
+            );
+        }
+
         return $subscriptions ?: false;
     }
 
@@ -504,7 +799,8 @@ class SubscriptionService
     public function upsert(array $subscriptionData): bool
     {
         try {
-            $this->upsertLocalSubscription($subscriptionData);
+            $resolvedStoreId = $subscriptionData['storeId'] ?? $this->storeId;
+            $this->upsertLocalSubscription($subscriptionData, $resolvedStoreId);
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
@@ -526,23 +822,35 @@ class SubscriptionService
     /**
      * Deletes (cancels) the subscription on Poynt, then deletes the local row.
      *
-     * @param string $appAccessToken
      * @param string $subscriptionId
+     * @param string|null $merchantAccessToken  Explicit merchant token to use; if null we attempt to load stored token
      * @return array  Poynt’s delete response (decoded JSON)
      * @throws RuntimeException|GuzzleException on HTTP or SQL error
      */
     public function deleteSubscription(
-        string $appAccessToken,
-        string $subscriptionId
+        string $subscriptionId,
+        ?string $merchantAccessToken = null
     ): array {
-        $orgId = ConfigApp::$orgId;
-        $appId = 'urn:aid:' . ConfigApp::$appId;
-        $endpoint = "/{$orgId}/apps/{$appId}/subscriptions/{$subscriptionId}";
+        if ($merchantAccessToken === null || $merchantAccessToken === '') {
+            if ($this->businessId === null || $this->businessId === '') {
+                throw new RuntimeException('Cannot delete subscription without a business ID or merchant access token.');
+            }
+
+            $merchantAccessToken = $this->getStoredMerchantToken($this->businessId);
+
+            if (!is_string($merchantAccessToken) || $merchantAccessToken === '') {
+                throw new RuntimeException(
+                    sprintf('No merchant access token available for business %s; cannot delete subscription.', $this->businessId)
+                );
+            }
+        }
+
+        $endpoint = $this->buildAppResourceUrl('subscriptions/' . $subscriptionId);
 
         try {
             $response = $this->http->delete($endpoint, [
                 'headers' => [
-                    'Authorization' => 'Bearer ' . $appAccessToken,
+                    'Authorization' => 'Bearer ' . $merchantAccessToken,
                     'Accept'        => 'application/json',
                 ],
             ]);
@@ -564,7 +872,7 @@ class SubscriptionService
             $this->context->getLog()->error("Poynt DELETE subscription failed: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
         }
 
-        return $respData;
+        return $respData ?? [];
     }
 
     // ────────────────────────────────────────────────────────────────────────────
@@ -577,7 +885,7 @@ class SubscriptionService
      * Poynt’s JSON is expected to include:
      *   - subscriptionId       (string)
      *   - businessId           (string)
-     *   - storeId              (string)
+     *   - storeId              (string, when available in payload)
      *   - planId               (string)
      *   - status               (string)
      *   - phase                (string)
@@ -589,14 +897,15 @@ class SubscriptionService
      *   - canceledAt           (string|null, ISO8601)
      *
      * @param array $poyntSub
+     * @param string|null $storeId Optional store identifier when missing from payload
      * @return void
      * @throws RuntimeException on SQL error
      */
-    public function upsertLocalSubscription(array $poyntSub): void
+    public function upsertLocalSubscription(array $poyntSub, ?string $storeId = null): void
     {
         $subscriptionId   = $poyntSub['subscriptionId'];
         $businessId       = $poyntSub['businessId'];
-        $storeId          = $poyntSub['storeId'];
+        $storeId          = $storeId ?? ($poyntSub['storeId'] ?? $this->storeId);
         $planId           = $poyntSub['planId'];
         $status           = $poyntSub['status'];
         $phase            = $poyntSub['phase'];
@@ -604,6 +913,7 @@ class SubscriptionService
         $trialEnd         = Format::optionalTimestamp($poyntSub['trialEnd']         ?? null);
         $startAt          = Format::optionalTimestamp($poyntSub['startAt']          ?? null);
         $currentPeriodEnd = Format::optionalTimestamp($poyntSub['currentPeriodEnd'] ?? null);
+        $cancelAtEnd      = Format::optionalBool($poyntSub['cancelAtPeriodEnd'] ?? null) ?? false;
         $endAt            = Format::optionalTimestamp($poyntSub['endAt']            ?? null);
         $cancelAtEnd      = $poyntSub['cancelAtPeriodEnd'] ?? false;
         $canceledAt       = Format::optionalTimestamp($poyntSub['canceledAt']       ?? null);
@@ -665,9 +975,68 @@ class SubscriptionService
                 'endAt'       => $endAt,
                 'cancelAtEnd' => $cancelAtEnd,
                 'canceledAt'  => $canceledAt,
+            ], [
+                'cancelAtEnd' => ParameterType::BOOLEAN,
             ]);
-        } catch (\Exception $e) {
-            $this->context->getLog()->error("Failed to upsert local subscription {$subscriptionId}: " . $e->getMessage() . ". Code: " . $e->getCode() . ". Whole object: ". json_encode($e));
+        } catch (Throwable $e) {
+            $conn = $this->context->getConn();
+            $rolledBack = false;
+
+            if ($conn !== null) {
+                try {
+                    if (method_exists($conn, 'isTransactionActive')) {
+                        if ($conn->isTransactionActive()) {
+                            $conn->rollBack();
+                            $rolledBack = true;
+                        }
+                    } else {
+                        $conn->rollBack();
+                        $rolledBack = true;
+                    }
+                } catch (Throwable $rollbackError) {
+                    error_log(
+                        sprintf(
+                            'SubscriptionService::upsertLocalSubscription rollback warning for subscription %s: %s',
+                            $subscriptionId,
+                            $rollbackError->getMessage()
+                        )
+                    );
+                }
+            }
+
+            $canLogWithMonolog = $rolledBack || $conn === null;
+
+            if (!$canLogWithMonolog && method_exists($conn, 'isTransactionActive')) {
+                try {
+                    $canLogWithMonolog = !$conn->isTransactionActive();
+                } catch (Throwable $statusError) {
+                    error_log(
+                        sprintf(
+                            'SubscriptionService::upsertLocalSubscription transaction status warning for subscription %s: %s',
+                            $subscriptionId,
+                            $statusError->getMessage()
+                        )
+                    );
+                }
+            }
+
+            $logMessage = sprintf(
+                'Failed to upsert local subscription %s: %s',
+                $subscriptionId,
+                $e->getMessage()
+            );
+
+            if ($canLogWithMonolog) {
+                $this->context->getLog()->error($logMessage, ['exception' => $e]);
+            } else {
+                error_log($logMessage);
+            }
+
+            throw new RuntimeException(
+                sprintf('Failed to upsert local subscription %s.', $subscriptionId),
+                (int) ($e->getCode() ?? 0),
+                $e
+            );
         }
     }
 
@@ -737,4 +1106,27 @@ class SubscriptionService
         }
     }
 
+    private function getAppUrn(): string
+    {
+        $appId = ConfigApp::$appId ?? '';
+
+        return str_starts_with($appId, 'urn:aid:') ? $appId : 'urn:aid:' . $appId;
+    }
+
+    private function buildAppResourceUrl(string $resource = ''): string
+    {
+        $orgId = ConfigApp::$orgId ?? '';
+
+        if ($orgId === '') {
+            throw new RuntimeException('ConfigApp::$orgId must be configured to build billing URLs.');
+        }
+
+        $appUrn = $this->getAppUrn();
+        $base = rtrim(self::POYNT_BILLING_BASE, '/');
+        $resourcePath = ltrim($resource, '/');
+
+        $url = sprintf('%s/%s/apps/%s', $base, $orgId, $appUrn);
+
+        return $resourcePath === '' ? $url : $url . '/' . $resourcePath;
+    }
 }
