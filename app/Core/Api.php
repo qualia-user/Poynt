@@ -274,6 +274,9 @@ class Api
         $router->get('/subscriptions/status', ['App\Controllers\SubscriptionController', 'status']);
         $router->post('/subscriptions/start-trial', ['App\Controllers\SubscriptionController', 'startTrial']);
 
+        // Developer utilities
+        $router->get('/sanity-check', ['App\Controllers\SanityCheckController', 'index']);
+
         return $router->getData();
     }
 
