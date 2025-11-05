@@ -7,6 +7,7 @@ use App\Core\Context;
 use App\Core\Response;
 use App\Services\ServiceFactory;
 use App\Services\SubscriptionService;
+use App\Services\WebhookService;
 use Doctrine\DBAL\Exception;
 use PDO;
 
@@ -636,6 +637,20 @@ class WebhooksController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * @return void
+     */
+    public function deleteWebhooksByBusinessId(): void
+    {
+        $businessId = $this->api->getParam('businessId');
+        $webhookService = new WebhookService($this->context);
+
+        if ($webhookService->deleteAllByBusinessId($businessId)) {
+            Api::response(Response::STATUS_OK);
+        }
+        Api::response(Response::STATUS_BAD_REQUEST, ['error' => 'Something went wrong.']);
     }
 }
 

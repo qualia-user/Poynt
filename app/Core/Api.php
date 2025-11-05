@@ -289,6 +289,7 @@ class Api
         // Webhooks
 //        $router->post('/webhooks/event-listener', ['App\Controllers\WebhooksController', 'eventListener']);
         $router->post('/webhooks/event-listener', ['App\Controllers\WebhooksController', 'eventListener']);
+        $router->get('/webhooks/delete-webhook/{businessId:[a-zA-Z0-9\-]+}', ['App\Controllers\WebhooksController', 'deleteWebhooksByBusinessId']);
 
         // Internal route to trigger token refreshes
         $router->post('/internal/refresh-tokens', ['App\Controllers\TokenController', 'refreshTokens']);
