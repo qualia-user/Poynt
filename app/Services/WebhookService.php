@@ -489,13 +489,26 @@ class WebhookService
 
             $deliveries = $this->fetchDeliveriesForBusiness($businessId, $accessToken);
             $deliveriesByHook = [];
+            $deliveriesMissingHookId = [];
             foreach ($deliveries as $delivery) {
                 if (!is_array($delivery)) {
                     continue;
                 }
 
                 $deliveryHookId = $delivery['hookId'] ?? null;
+                if ((!is_string($deliveryHookId) || $deliveryHookId === '') && isset($delivery['hook']) && is_array($delivery['hook'])) {
+                    $candidate = $delivery['hook']['id'] ?? $delivery['hook']['hookId'] ?? null;
+                    if (!is_string($candidate) || $candidate === '') {
+                        $candidate = $delivery['hook']['hook']['id'] ?? $delivery['hook']['hook']['hookId'] ?? null;
+                    }
+
+                    if (is_string($candidate) && $candidate !== '') {
+                        $deliveryHookId = $candidate;
+                    }
+                }
+
                 if (!is_string($deliveryHookId) || $deliveryHookId === '') {
+                    $deliveriesMissingHookId[] = $delivery;
                     continue;
                 }
 
@@ -519,6 +532,18 @@ class WebhookService
                 if (is_string($hookId) && $hookId !== '' && isset($deliveriesByHook[$hookId])) {
                     $hook['deliveries'] = $deliveriesByHook[$hookId];
                 }
+            }
+
+            if (!empty($deliveriesMissingHookId)) {
+                FetchResponseLogger::info(
+                    $this->context->getLog(),
+                    'WebhookService::fetchByBusinessId deliveries missing hookId',
+                    [
+                        'businessId' => $businessId,
+                        'entity' => 'deliveries',
+                        'payload' => $deliveriesMissingHookId,
+                    ]
+                );
             }
 
             FetchResponseLogger::info(
@@ -745,12 +770,26 @@ class WebhookService
             }
 
             $row['businessId'] = $businessId;
-            if ($hookId !== null && !isset($row['hookId'])) {
+
+            if (!isset($row['hookId']) || !is_string($row['hookId']) || $row['hookId'] === '') {
+                if (isset($row['hook']) && is_array($row['hook'])) {
+                    $candidate = $row['hook']['id'] ?? $row['hook']['hookId'] ?? null;
+                    if (!is_string($candidate) || $candidate === '') {
+                        $candidate = $row['hook']['hook']['id'] ?? $row['hook']['hook']['hookId'] ?? null;
+                    }
+
+                    if (is_string($candidate) && $candidate !== '') {
+                        $row['hookId'] = $candidate;
+                    }
+                }
+            }
+
+            if ($hookId !== null && (!isset($row['hookId']) || $row['hookId'] === '')) {
                 $row['hookId'] = $hookId;
             }
         }
 
-        return array_filter($payload, 'is_array');
+        return array_values(array_filter($payload, 'is_array'));
     }
 
     private function resolveDeliveries(array $hookData): array
