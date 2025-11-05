@@ -830,10 +830,21 @@ class WebhookService
 
             $deliveryId = $delivery['id'];
             $eventType = $delivery['eventType'] ?? null;
-            $deliveredAt = Format::optionalTimestamp($delivery['deliveredAt'] ?? $delivery['deliveredAtExt'] ?? null);
+            $deliveredAt = Format::optionalTimestamp(
+                $delivery['deliveredAt']
+                    ?? $delivery['deliveredAtExt']
+                    ?? $delivery['updatedAt']
+                    ?? $delivery['createdAt']
+                    ?? null
+            );
             $status = $delivery['status'] ?? null;
-            $httpStatus = isset($delivery['httpStatus']) ? (int)$delivery['httpStatus'] : null;
-            $retryCount = isset($delivery['retryCount']) ? (int)$delivery['retryCount'] : null;
+            $httpStatus = Format::optionalInt(
+                $delivery['httpStatus']
+                    ?? $delivery['statusCode']
+                    ?? $delivery['responseCode']
+                    ?? null
+            );
+            $retryCount = Format::optionalInt($delivery['retryCount'] ?? $delivery['attempt'] ?? null);
             $payload = Format::jsonObject($delivery);
 
             try {
