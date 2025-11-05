@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Config\ConfigApp;
 use App\Core\Context;
 use App\Services\Support\FetchResponseLogger;
+use App\Services\Support\PaginatedRequest;
 use App\Services\Support\PoyntDataFormatter as Format;
 use App\Services\TokenService;
 use GuzzleHttp\ClientInterface;
@@ -20,6 +21,7 @@ class WebhookService
     private ClientInterface $httpClient;
 
     public const POYNT_WEBHOOK_URL = 'https://services.poynt.net/hooks';
+    private const POYNT_BUSINESS_URL = 'https://services.poynt.net/businesses';
 
     /**
      * Constructor.
@@ -485,14 +487,37 @@ class WebhookService
                 return false;
             }
 
+            $deliveries = $this->fetchDeliveriesForBusiness($businessId, $accessToken);
+            $deliveriesByHook = [];
+            foreach ($deliveries as $delivery) {
+                if (!is_array($delivery)) {
+                    continue;
+                }
+
+                $deliveryHookId = $delivery['hookId'] ?? null;
+                if (!is_string($deliveryHookId) || $deliveryHookId === '') {
+                    continue;
+                }
+
+                if (!isset($deliveriesByHook[$deliveryHookId])) {
+                    $deliveriesByHook[$deliveryHookId] = [];
+                }
+
+                if (!isset($delivery['hookId'])) {
+                    $delivery['hookId'] = $deliveryHookId;
+                }
+
+                $deliveriesByHook[$deliveryHookId][] = $delivery;
+            }
+
             foreach ($hooks as &$hook) {
                 if (!is_array($hook) || !isset($hook['id'])) {
                     continue;
                 }
 
-                $deliveries = $this->fetchDeliveries($businessId, $hook['id'], $accessToken);
-                if (!empty($deliveries)) {
-                    $hook['deliveries'] = $deliveries;
+                $hookId = $hook['id'];
+                if (is_string($hookId) && $hookId !== '' && isset($deliveriesByHook[$hookId])) {
+                    $hook['deliveries'] = $deliveriesByHook[$hookId];
                 }
             }
 
@@ -617,30 +642,31 @@ class WebhookService
         return $allDeleted;
     }
 
-    private function fetchDeliveries(string $businessId, string $hookId, string $accessToken): array
+    private function fetchDeliveriesForBusiness(string $businessId, string $accessToken): array
     {
-        try {
-            $response = $this->httpClient->get(
-                self::POYNT_WEBHOOK_URL . '/' . $hookId . '/deliveries',
-                [
-                    'headers' => [
-                        'Authorization' => 'Bearer ' . $accessToken,
-                    ],
-                    'query' => [
-                        'businessId' => $businessId,
-                    ],
-                ]
-            );
+        $url = self::POYNT_BUSINESS_URL . '/' . rawurlencode($businessId) . '/deliveries';
+        $options = [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $accessToken,
+            ],
+        ];
 
+        try {
+            $response = $this->httpClient->get($url, $options);
             $payload = json_decode($response->getBody(), true);
-            return $this->normalizeDeliveries($payload, $businessId, $hookId);
+            if (!is_array($payload)) {
+                return [];
+            }
+
+            $payload = PaginatedRequest::collect($this->httpClient, $payload, $url, $options, 'deliveries');
+
+            return $this->normalizeDeliveries($payload, $businessId);
         } catch (BadResponseException $e) {
             $response = $e->getResponse();
             if ($response !== null && $response->getStatusCode() === 404) {
                 $this->context->getLog()->info(
                     sprintf(
-                        'WebhookService::fetchDeliveries: GET /hooks/%s/deliveries?businessId=%s returned 404, treating as none',
-                        $hookId,
+                        'WebhookService::fetchDeliveriesForBusiness: GET /businesses/%s/deliveries returned 404, treating as none',
                         $businessId
                     )
                 );
@@ -649,13 +675,17 @@ class WebhookService
             }
 
             $this->context->getLog()->error(
-                sprintf('WebhookService::fetchDeliveries: failed for hook %s: %s', $hookId, $e->getMessage())
+                sprintf(
+                    'WebhookService::fetchDeliveriesForBusiness: failed for business %s: %s',
+                    $businessId,
+                    $e->getMessage()
+                )
             );
 
             return [];
         } catch (GuzzleException $e) {
             $this->context->getLog()->error(
-                sprintf('WebhookService::fetchDeliveries: failed for hook %s: %s', $hookId, $e->getMessage())
+                sprintf('WebhookService::fetchDeliveriesForBusiness: failed for business %s: %s', $businessId, $e->getMessage())
             );
             return [];
         }
@@ -685,7 +715,7 @@ class WebhookService
         return false;
     }
 
-    private function normalizeDeliveries(mixed $payload, string $businessId, string $hookId): array
+    private function normalizeDeliveries(mixed $payload, string $businessId, ?string $hookId = null): array
     {
         if (!is_array($payload)) {
             return [];
@@ -710,9 +740,13 @@ class WebhookService
         }
 
         foreach ($payload as &$row) {
-            if (is_array($row)) {
-                $row['businessId'] = $businessId;
-                $row['hookId'] = $row['hookId'] ?? $hookId;
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $row['businessId'] = $businessId;
+            if ($hookId !== null && !isset($row['hookId'])) {
+                $row['hookId'] = $hookId;
             }
         }
 
