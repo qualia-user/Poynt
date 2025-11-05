@@ -7,6 +7,7 @@ use App\Core\Context;
 use App\Core\Response;
 use App\Services\ServiceFactory;
 use App\Services\SubscriptionService;
+use Doctrine\DBAL\Exception;
 use PDO;
 
 class WebhooksController extends Controller
@@ -25,6 +26,7 @@ class WebhooksController extends Controller
      * Processes incoming webhook events using pre-stored request data.
      *
      * @return void
+     * @throws Exception
      */
     public function eventListener(): void
     {
@@ -195,8 +197,8 @@ class WebhooksController extends Controller
     private function handleSubscriptionStart(array $payload)
     {
         $subscriptionId = $payload['subscriptionId'] ?? null;
-        $businessId     = $payload['businessId']     ?? null;
-        $storeId        = $payload['storeId']        ?? null;
+        $businessId = $payload['businessId'] ?? null;
+        $storeId = $payload['storeId'] ?? null;
 
         if (!$subscriptionId || !$businessId || !$storeId) {
             throw new \InvalidArgumentException('Missing subscription data');
@@ -213,8 +215,8 @@ class WebhooksController extends Controller
     private function handleSubscriptionEnd(array $payload)
     {
         $subscriptionId = $payload['subscriptionId'] ?? null;
-        $businessId     = $payload['businessId']     ?? null;
-        $storeId        = $payload['storeId']        ?? null;
+        $businessId = $payload['businessId'] ?? null;
+        $storeId = $payload['storeId'] ?? null;
 
         if (!$subscriptionId || !$businessId || !$storeId) {
             throw new \InvalidArgumentException('Missing subscription data');
@@ -524,7 +526,7 @@ class WebhooksController extends Controller
     private function extractResource(array $payload, array $preferredPaths = []): ?array
     {
         foreach ($preferredPaths as $path) {
-            $value = $this->resolveNestedValue($payload, (array) $path);
+            $value = $this->resolveNestedValue($payload, (array)$path);
             if (is_array($value)) {
                 return $value;
             }
@@ -542,7 +544,7 @@ class WebhooksController extends Controller
         foreach ($fallbackPaths as $path) {
             if (!empty($preferredPaths)) {
                 foreach ($preferredPaths as $preferredPath) {
-                    $combinedPath = array_merge($path, (array) $preferredPath);
+                    $combinedPath = array_merge($path, (array)$preferredPath);
                     $value = $this->resolveNestedValue($payload, $combinedPath);
                     if (is_array($value)) {
                         return $value;
@@ -580,6 +582,12 @@ class WebhooksController extends Controller
         return $value;
     }
 
+    /**
+     * @param array $resource
+     * @param array $payload
+     * @param array $keys
+     * @return array
+     */
     private function enrichResourceWithContext(array $resource, array $payload, array $keys = []): array
     {
         $defaultKeys = ['businessId', 'storeId', 'storeDeviceId'];
@@ -591,15 +599,21 @@ class WebhooksController extends Controller
                 if ($value !== null) {
                     $resource[$key] = $value;
                 }
-            if (!isset($resource[$key]) && isset($payload[$key])) {
-                $resource[$key] = $payload[$key];
+                if (!isset($resource[$key]) && isset($payload[$key])) {
+                    $resource[$key] = $payload[$key];
+                }
             }
-        }
 
-        return $resource;
+            return $resource;
+        }
     }
 
-    private function extractContextValue(array $payload, string $key): mixed
+    /**
+     * @param array $payload
+     * @param string $key
+     * @return mixed
+     */
+    function extractContextValue(array $payload, string $key): mixed
     {
         if (isset($payload[$key])) {
             return $payload[$key];
@@ -623,5 +637,13 @@ class WebhooksController extends Controller
 
         return null;
     }
-
 }
+
+
+
+
+
+
+
+
+
