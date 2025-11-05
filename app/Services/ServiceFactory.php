@@ -53,9 +53,9 @@ class ServiceFactory
         return new PaylinkService($this->context, $businessId);
     }
 
-    public function hook(?string $businessId = null): HookService
+    public function hook(?string $businessId = null): WebhookService
     {
-        return new HookService($this->context, $businessId);
+        return new WebhookService($this->context, $businessId);
     }
 
     public function store(?string $businessId = null): StoreService
