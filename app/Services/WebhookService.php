@@ -463,20 +463,19 @@ class WebhookService
         }
 
         $tokenService = new TokenService($this->context);
-        $accessToken = $tokenService->getMerchantToken($businessId);
+        $merchantToken = $tokenService->getMerchantToken($businessId);
+        $appToken = $tokenService->getAppToken($businessId);
+
+        if (!is_string($appToken) || $appToken === '') {
+            $this->context->getLog()->error(
+                sprintf('WebhookService::fetchByBusinessId: missing app access token for business %s', $businessId)
+            );
+
+            return false;
+        }
 
         try {
-            $response = $this->httpClient->get(self::POYNT_WEBHOOK_URL, [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $accessToken,
-                ],
-                'query' => [
-                    'businessId' => ConfigApp::$orgId,
-                ],
-            ]);
-
-            $hooksPayload = json_decode($response->getBody(), true);
-            $hooks = $this->normalizeHooks($hooksPayload);
+            $hooks = $this->fetchAllHooks($businessId, $appToken);
             if ($hooks === false) {
                 $this->context->getLog()->error(
                     sprintf(
@@ -487,7 +486,7 @@ class WebhookService
                 return false;
             }
 
-            $deliveries = $this->fetchDeliveriesForBusiness($businessId, $accessToken);
+            $deliveries = $this->fetchDeliveriesForBusiness($businessId, $merchantToken);
             $deliveriesByHook = [];
             $deliveriesMissingHookId = [];
             foreach ($deliveries as $delivery) {
@@ -523,16 +522,55 @@ class WebhookService
                 $deliveriesByHook[$deliveryHookId][] = $delivery;
             }
 
-            foreach ($hooks as &$hook) {
-                if (!is_array($hook) || !isset($hook['id'])) {
+            $hooksById = [];
+            foreach ($hooks as $hook) {
+                if (!is_array($hook)) {
                     continue;
                 }
 
-                $hookId = $hook['id'];
-                if (is_string($hookId) && $hookId !== '' && isset($deliveriesByHook[$hookId])) {
-                    $hook['deliveries'] = $deliveriesByHook[$hookId];
+                $hookId = $hook['id'] ?? null;
+                if (!is_string($hookId) || $hookId === '') {
+                    continue;
+                }
+
+                $hook['deliveries'] = [];
+                $hooksById[$hookId] = $hook;
+            }
+
+            $hookIds = array_keys($hooksById);
+            $this->context->getLog()->info(
+                'WebhookService::fetchByBusinessId hook ids',
+                [
+                    'businessId' => $businessId,
+                    'hookIds' => $hookIds,
+                ]
+            );
+
+            $deliveriesByHookKeys = array_keys($deliveriesByHook);
+            $this->context->getLog()->info(
+                'WebhookService::fetchByBusinessId deliveries grouped by hookId',
+                [
+                    'businessId' => $businessId,
+                    'hookIds' => $deliveriesByHookKeys,
+                ]
+            );
+
+            $unknownHookIds = array_values(array_diff($deliveriesByHookKeys, $hookIds));
+            $this->context->getLog()->info(
+                'WebhookService::fetchByBusinessId deliveries referencing unknown hookIds',
+                [
+                    'businessId' => $businessId,
+                    'hookIds' => $unknownHookIds,
+                ]
+            );
+
+            foreach ($deliveriesByHook as $hookId => $hookDeliveries) {
+                if (isset($hooksById[$hookId])) {
+                    $hooksById[$hookId]['deliveries'] = $hookDeliveries;
                 }
             }
+
+            $hooks = array_values($hooksById);
 
             if (!empty($deliveriesMissingHookId)) {
                 FetchResponseLogger::info(
@@ -667,6 +705,78 @@ class WebhookService
         return $allDeleted;
     }
 
+    /**
+     * Fetch all hooks for the configured developer organization, following pagination links.
+     *
+     * @param string $businessId
+     * @param string $appToken
+     * @return array|false
+     * @throws BadResponseException
+     * @throws GuzzleException
+     */
+    private function fetchAllHooks(string $businessId, string $appToken): array|false
+    {
+        $options = [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $appToken,
+            ],
+            'query' => [
+                'businessId' => ConfigApp::$orgId,
+            ],
+        ];
+
+        $hooks = [];
+        $nextUrl = self::POYNT_WEBHOOK_URL;
+        $visited = [];
+        $isFirstPage = true;
+
+        while ($nextUrl !== null) {
+            $requestOptions = $options;
+            if (!$isFirstPage) {
+                unset($requestOptions['query']);
+            }
+            $isFirstPage = false;
+
+            $response = $this->httpClient->get($nextUrl, $requestOptions);
+            $payload = json_decode((string) $response->getBody(), true);
+            if (!is_array($payload)) {
+                return false;
+            }
+
+            $pageHooks = $this->normalizeHooks($payload);
+            if ($pageHooks === false) {
+                return false;
+            }
+
+            foreach ($pageHooks as $hook) {
+                if (!is_array($hook)) {
+                    continue;
+                }
+
+                $hookId = $hook['id'] ?? null;
+                if (is_string($hookId) && $hookId !== '') {
+                    $hooks[$hookId] = $hook;
+                } else {
+                    $hooks[] = $hook;
+                }
+            }
+
+            $nextCandidate = $this->extractNextHooksUrl($payload);
+            if ($nextCandidate === null) {
+                break;
+            }
+
+            if (isset($visited[$nextCandidate])) {
+                break;
+            }
+
+            $visited[$nextCandidate] = true;
+            $nextUrl = $nextCandidate;
+        }
+
+        return array_values($hooks);
+    }
+
     private function fetchDeliveriesForBusiness(string $businessId, string $accessToken): array
     {
         $url = self::POYNT_BUSINESS_URL . '/' . rawurlencode($businessId) . '/deliveries';
@@ -722,22 +832,253 @@ class WebhookService
             return false;
         }
 
-        if (array_is_list($payload)) {
-            return array_values(array_filter($payload, 'is_array'));
-        }
-
+        $items = null;
         $candidateKeys = ['hooks', 'items', 'data', 'results'];
-        foreach ($candidateKeys as $key) {
-            if (isset($payload[$key]) && is_array($payload[$key])) {
-                return array_values(array_filter($payload[$key], 'is_array'));
+
+        if (array_is_list($payload)) {
+            $items = $payload;
+        } else {
+            foreach ($candidateKeys as $key) {
+                if (array_key_exists($key, $payload)) {
+                    if ($payload[$key] === null) {
+                        $items = [];
+                        break;
+                    }
+
+                    if (is_array($payload[$key])) {
+                        $items = $payload[$key];
+                        break;
+                    }
+
+                    return false;
+                }
             }
         }
 
-        if (isset($payload['_embedded']) && is_array($payload['_embedded'])) {
+        if ($items === null && isset($payload['_embedded']) && is_array($payload['_embedded'])) {
             return $this->normalizeHooks($payload['_embedded']);
         }
 
-        return false;
+        if ($items === null) {
+            $items = [];
+        }
+
+        if (!is_array($items)) {
+            return false;
+        }
+
+        if (!array_is_list($items)) {
+            $rows = [];
+            foreach ($items as $value) {
+                if (is_array($value)) {
+                    $rows[] = $value;
+                }
+            }
+            $items = $rows;
+        }
+
+        $normalized = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $normalized[] = $this->normalizeSingleHook($item);
+        }
+
+        return $normalized;
+    }
+
+    private function normalizeSingleHook(array $hook): array
+    {
+        $flattened = $this->flattenHook($hook);
+
+        unset($flattened['hook']);
+        unset($flattened['deliveries']);
+
+        $requiredKeys = [
+            'id',
+            'eventTypes',
+            'deliveryUrl',
+            'businessId',
+            'applicationId',
+            'status',
+            'createdAt',
+            'updatedAt',
+        ];
+
+        foreach ($requiredKeys as $key) {
+            if (!array_key_exists($key, $flattened)) {
+                $flattened[$key] = null;
+            }
+        }
+
+        return $flattened;
+    }
+
+    private function flattenHook(array $hook): array
+    {
+        $flattened = $hook;
+
+        while (isset($flattened['hook']) && is_array($flattened['hook'])) {
+            $inner = $flattened['hook'];
+            unset($flattened['hook']);
+            $flattened = array_merge($flattened, $inner);
+        }
+
+        return $flattened;
+    }
+
+    private function extractNextHooksUrl(array $payload): ?string
+    {
+        $origin = $this->buildHooksOrigin();
+
+        foreach ($this->normaliseHookLinks($payload) as $link) {
+            if (!is_array($link)) {
+                continue;
+            }
+
+            $rel = $link['rel'] ?? $link['type'] ?? null;
+            if (!is_string($rel) || strtolower($rel) !== 'next') {
+                continue;
+            }
+
+            $href = $link['href'] ?? $link['uri'] ?? $link['url'] ?? null;
+            if (!is_string($href) || $href === '') {
+                continue;
+            }
+
+            $href = trim($href);
+            if ($href === '') {
+                continue;
+            }
+
+            if (parse_url($href, PHP_URL_SCHEME) === null && $origin !== '') {
+                return $this->resolveHookHref($href, $origin);
+            }
+
+            return $href;
+        }
+
+        if (isset($payload['links']['next']) && is_string($payload['links']['next']) && $payload['links']['next'] !== '') {
+            $href = trim($payload['links']['next']);
+            if ($href === '') {
+                return null;
+            }
+
+            if (parse_url($href, PHP_URL_SCHEME) === null && $origin !== '') {
+                return $this->resolveHookHref($href, $origin);
+            }
+
+            return $href;
+        }
+
+        return null;
+    }
+
+    private function buildHooksOrigin(): string
+    {
+        $parts = parse_url(self::POYNT_WEBHOOK_URL);
+        if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
+            return '';
+        }
+
+        $origin = $parts['scheme'] . '://' . $parts['host'];
+        if (isset($parts['port'])) {
+            $origin .= ':' . $parts['port'];
+        }
+
+        return $origin;
+    }
+
+    private function resolveHookHref(string $href, string $origin): string
+    {
+        $basePath = parse_url(self::POYNT_WEBHOOK_URL, PHP_URL_PATH) ?? '';
+        $basePath = '/' . ltrim($basePath, '/');
+
+        if ($href !== '' && $href[0] === '?') {
+            return rtrim($origin, '/') . $basePath . $href;
+        }
+
+        if ($href === '' || $href[0] !== '/') {
+            $href = '/' . ltrim($href, '/');
+        }
+
+        return rtrim($origin, '/') . $href;
+    }
+
+    private function normaliseHookLinks(array $payload): array
+    {
+        $links = [];
+
+        foreach (['links', 'link', '_links'] as $key) {
+            if (!array_key_exists($key, $payload)) {
+                continue;
+            }
+
+            $links = array_merge($links, $this->parseHookLinkValue($payload[$key]));
+        }
+
+        return $links;
+    }
+
+    private function parseHookLinkValue(mixed $value): array
+    {
+        $links = [];
+
+        if (is_array($value)) {
+            if ($this->isAssoc($value) && $this->looksLikeSingleLink($value)) {
+                $links[] = $value;
+
+                return $links;
+            }
+
+            if ($this->isAssoc($value) && !$this->looksLikeSingleLink($value)) {
+                foreach ($value as $rel => $linkValue) {
+                    if (is_array($linkValue)) {
+                        $link = $linkValue;
+                        if (!isset($link['rel']) && is_string($rel)) {
+                            $link['rel'] = $rel;
+                        }
+                        $links[] = $link;
+                    } elseif (is_string($linkValue)) {
+                        $links[] = [
+                            'rel' => is_string($rel) ? $rel : 'next',
+                            'href' => $linkValue,
+                        ];
+                    }
+                }
+
+                return $links;
+            }
+
+            foreach ($value as $link) {
+                if (is_array($link)) {
+                    $links[] = $link;
+                }
+            }
+
+            return $links;
+        }
+
+        if (is_string($value) && $value !== '') {
+            $links[] = [
+                'rel' => 'next',
+                'href' => $value,
+            ];
+        }
+
+        return $links;
+    }
+
+    private function looksLikeSingleLink(array $value): bool
+    {
+        return array_key_exists('rel', $value) || array_key_exists('href', $value) || array_key_exists('uri', $value);
+    }
+
+    private function isAssoc(array $value): bool
+    {
+        return $value !== [] && array_keys($value) !== range(0, count($value) - 1);
     }
 
     private function normalizeDeliveries(mixed $payload, string $businessId, ?string $hookId = null): array
