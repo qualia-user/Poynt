@@ -642,9 +642,8 @@ class WebhooksController extends Controller
     /**
      * @return void
      */
-    public function deleteWebhooksByBusinessId(): void
+    public function deleteWebhooksByBusinessId(string $businessId): void
     {
-        $businessId = $this->api->getParam('businessId');
         $webhookService = new WebhookService($this->context);
 
         if ($webhookService->deleteAllByBusinessId($businessId)) {
