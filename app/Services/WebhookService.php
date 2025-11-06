@@ -463,85 +463,163 @@ class WebhookService
         }
 
         $tokenService = new TokenService($this->context);
-        $accessToken = $tokenService->getMerchantToken($businessId);
+        $accessToken = (string)$tokenService->getMerchantToken($businessId);
 
         try {
-            $response = $this->httpClient->get(self::POYNT_WEBHOOK_URL, [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $accessToken,
-                ],
-                'query' => [
-                    'businessId' => ConfigApp::$orgId,
-                ],
-            ]);
+            $hooksPayloads = $this->fetchHooksForMerchantAndBilling($businessId);
 
-            $hooksPayload = json_decode($response->getBody(), true);
-            $hooks = $this->normalizeHooks($hooksPayload);
-            if ($hooks === false) {
+            $merchantHooksPayload = $hooksPayloads['merchant'] ?? [];
+            $billingHooksPayload = $hooksPayloads['billing'] ?? [];
+
+            $merchantHooks = $this->normalizeHooks($merchantHooksPayload);
+            if ($merchantHooks === false) {
                 $this->context->getLog()->error(
                     sprintf(
-                        'WebhookService::fetchByBusinessId: unexpected response while loading hooks for business %s',
+                        'WebhookService::fetchByBusinessId: unexpected response while loading merchant hooks for business %s',
                         $businessId
                     )
                 );
                 return false;
             }
 
+            $billingHooks = $this->normalizeHooks($billingHooksPayload);
+            if ($billingHooks === false) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'WebhookService::fetchByBusinessId: unexpected response while loading billing hooks for org %s',
+                        ConfigApp::$orgId
+                    )
+                );
+                return false;
+            }
+
+            $hooksWithoutId = [];
+            $hooksByNormalizedId = [];
+            foreach (array_merge($merchantHooks, $billingHooks) as $hook) {
+                if (!is_array($hook)) {
+                    continue;
+                }
+
+                if (!array_key_exists('id', $hook)) {
+                    $hooksWithoutId[] = $hook;
+                    continue;
+                }
+
+                $normalizedId = $this->normalizeId(
+                    is_scalar($hook['id']) ? (string)$hook['id'] : null
+                );
+
+                if ($normalizedId === null) {
+                    $hooksWithoutId[] = $hook;
+                    continue;
+                }
+
+                if (!array_key_exists($normalizedId, $hooksByNormalizedId)) {
+                    $hooksByNormalizedId[$normalizedId] = $hook;
+                }
+            }
+
+            $hooks = array_values($hooksByNormalizedId);
+            if (!empty($hooksWithoutId)) {
+                $hooks = array_merge($hooks, $hooksWithoutId);
+            }
+
+            $hookBusinessIdSet = [];
+            foreach ($hooks as $hook) {
+                if (is_array($hook) && isset($hook['businessId']) && is_string($hook['businessId']) && $hook['businessId'] !== '') {
+                    $hookBusinessIdSet[$hook['businessId']] = true;
+                }
+            }
+
             $deliveries = $this->fetchDeliveriesForBusiness($businessId, $accessToken);
-            $deliveriesByHook = [];
+            $deliveriesByHookId = [];
             $deliveriesMissingHookId = [];
+            $deliveryBusinessIdSet = [];
             foreach ($deliveries as $delivery) {
                 if (!is_array($delivery)) {
                     continue;
                 }
 
-                $deliveryHookId = $delivery['hookId'] ?? null;
-                if ((!is_string($deliveryHookId) || $deliveryHookId === '') && isset($delivery['hook']) && is_array($delivery['hook'])) {
-                    $candidate = $delivery['hook']['id'] ?? $delivery['hook']['hookId'] ?? null;
-                    if (!is_string($candidate) || $candidate === '') {
-                        $candidate = $delivery['hook']['hook']['id'] ?? $delivery['hook']['hook']['hookId'] ?? null;
-                    }
+                if (isset($delivery['businessId']) && is_string($delivery['businessId']) && $delivery['businessId'] !== '') {
+                    $deliveryBusinessIdSet[$delivery['businessId']] = true;
+                }
 
-                    if (is_string($candidate) && $candidate !== '') {
-                        $deliveryHookId = $candidate;
+                $deliveryHookId = $delivery['hookId'] ?? null;
+                if (!is_string($deliveryHookId) || $deliveryHookId === '') {
+                    $deliveryHookId = null;
+                    if (isset($delivery['hook']) && is_array($delivery['hook'])) {
+                        $candidate = $delivery['hook']['id'] ?? $delivery['hook']['hookId'] ?? null;
+                        if (!is_string($candidate) || $candidate === '') {
+                            if (isset($delivery['hook']['hook']) && is_array($delivery['hook']['hook'])) {
+                                $candidate = $delivery['hook']['hook']['id'] ?? $delivery['hook']['hook']['hookId'] ?? null;
+                            }
+                        }
+
+                        if (is_string($candidate) && $candidate !== '') {
+                            $deliveryHookId = $candidate;
+                        }
                     }
                 }
 
-                if (!is_string($deliveryHookId) || $deliveryHookId === '') {
+                if (is_string($deliveryHookId) && $deliveryHookId !== '') {
+                    $delivery['hookId'] = $deliveryHookId;
+                } else {
                     $deliveriesMissingHookId[] = $delivery;
                     continue;
                 }
 
-                if (!isset($deliveriesByHook[$deliveryHookId])) {
-                    $deliveriesByHook[$deliveryHookId] = [];
-                }
-
-                if (!isset($delivery['hookId'])) {
-                    $delivery['hookId'] = $deliveryHookId;
-                }
-
-                $deliveriesByHook[$deliveryHookId][] = $delivery;
-            }
-
-            foreach ($hooks as &$hook) {
-                if (!is_array($hook) || !isset($hook['id'])) {
+                $normalizedDeliveryHookId = $this->normalizeId($deliveryHookId);
+                if ($normalizedDeliveryHookId === null) {
+                    $deliveriesMissingHookId[] = $delivery;
                     continue;
                 }
 
-                $hookId = $hook['id'];
-                if (is_string($hookId) && $hookId !== '' && isset($deliveriesByHook[$hookId])) {
-                    $hook['deliveries'] = $deliveriesByHook[$hookId];
+                if (!isset($deliveriesByHookId[$normalizedDeliveryHookId])) {
+                    $deliveriesByHookId[$normalizedDeliveryHookId] = [];
                 }
+
+                $deliveriesByHookId[$normalizedDeliveryHookId][] = $delivery;
             }
 
-            if (!empty($deliveriesMissingHookId)) {
+            $hooksById = $this->indexHooksById($hooks);
+            foreach ($hooksById as $id => &$hook) {
+                if (isset($deliveriesByHookId[$id])) {
+                    $hook['deliveries'] = $deliveriesByHookId[$id];
+                }
+            }
+            unset($hook);
+
+            $intersectingIds = array_values(array_intersect(array_keys($hooksById), array_keys($deliveriesByHookId)));
+            $unknownHookIds = array_values(array_diff(array_keys($deliveriesByHookId), array_keys($hooksById)));
+            $deliveriesWithUnknownHookId = [];
+            foreach ($unknownHookIds as $unknownId) {
+                $deliveriesWithUnknownHookId = array_merge(
+                    $deliveriesWithUnknownHookId,
+                    $deliveriesByHookId[$unknownId] ?? []
+                );
+            }
+
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'WebhookService::fetchByBusinessId diagnostics',
+                [
+                    'businessId' => $businessId,
+                    'hookBusinessIds' => array_values(array_keys($hookBusinessIdSet)),
+                    'deliveryBusinessIds' => array_values(array_keys($deliveryBusinessIdSet)),
+                    'intersectingHookIds' => $intersectingIds,
+                    'deliveriesWithUnknownHookId' => $deliveriesWithUnknownHookId,
+                ]
+            );
+
+            $deliveriesMissingHookLogPayload = array_merge($deliveriesMissingHookId, $deliveriesWithUnknownHookId);
+            if (!empty($deliveriesMissingHookLogPayload)) {
                 FetchResponseLogger::info(
                     $this->context->getLog(),
                     'WebhookService::fetchByBusinessId deliveries missing hookId',
                     [
                         'businessId' => $businessId,
                         'entity' => 'deliveries',
-                        'payload' => $deliveriesMissingHookId,
+                        'payload' => $deliveriesMissingHookLogPayload,
                     ]
                 );
             }
@@ -665,6 +743,105 @@ class WebhookService
         }
 
         return $allDeleted;
+    }
+
+    private function fetchHooksForMerchantAndBilling(string $businessId): array
+    {
+        $tokenService = new TokenService($this->context);
+        $merchantAccessToken = (string)$tokenService->getMerchantToken($businessId);
+        $appAccessToken = $tokenService->getAppToken($businessId);
+        $billingAccessToken = is_string($appAccessToken) && $appAccessToken !== ''
+            ? $appAccessToken
+            : $merchantAccessToken;
+
+        $payloads = [
+            'merchant' => [],
+            'billing' => [],
+        ];
+
+        $requests = [
+            'merchant' => [
+                'businessId' => $businessId,
+                'token' => $merchantAccessToken,
+            ],
+            'billing' => [
+                'businessId' => ConfigApp::$orgId,
+                'token' => (string)$billingAccessToken,
+            ],
+        ];
+
+        foreach ($requests as $key => $request) {
+            $requestBusinessId = $request['businessId'];
+            if (!is_string($requestBusinessId) || $requestBusinessId === '') {
+                continue;
+            }
+
+            try {
+                $response = $this->httpClient->get(self::POYNT_WEBHOOK_URL, [
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $request['token'],
+                    ],
+                    'query' => [
+                        'businessId' => $requestBusinessId,
+                    ],
+                ]);
+
+                $payload = json_decode($response->getBody(), true);
+                $payloads[$key] = is_array($payload) ? $payload : [];
+            } catch (BadResponseException $e) {
+                $response = $e->getResponse();
+                if ($response !== null && $response->getStatusCode() === 404) {
+                    $this->context->getLog()->info(
+                        sprintf(
+                            'WebhookService::fetchHooksForMerchantAndBilling: GET /hooks?businessId=%s returned 404, treating as no hooks',
+                            $requestBusinessId
+                        )
+                    );
+                    $payloads[$key] = [];
+                    continue;
+                }
+
+                throw $e;
+            }
+        }
+
+        return $payloads;
+    }
+
+    private function normalizeId(?string $s): ?string
+    {
+        if ($s === null) {
+            return null;
+        }
+
+        $normalized = strtolower(trim((string)$s));
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    private function indexHooksById(array &$hooks): array
+    {
+        $indexed = [];
+
+        foreach ($hooks as &$hook) {
+            if (!is_array($hook) || !array_key_exists('id', $hook)) {
+                continue;
+            }
+
+            $normalizedId = $this->normalizeId(
+                is_scalar($hook['id']) ? (string)$hook['id'] : null
+            );
+
+            if ($normalizedId === null) {
+                continue;
+            }
+
+            $indexed[$normalizedId] =& $hook;
+        }
+
+        unset($hook);
+
+        return $indexed;
     }
 
     private function fetchDeliveriesForBusiness(string $businessId, string $accessToken): array
