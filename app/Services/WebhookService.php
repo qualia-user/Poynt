@@ -48,10 +48,16 @@ class WebhookService
      */
     public function registerWebhook(string $merchantAccessToken, array $events): mixed
     {
+        $businessId = $this->businessId;
+        // When dealing with subscription event use, developer organization ID, NOT business ID
+        if (in_array('APPLICATION_SUBSCRIPTION_START', $events)) {
+            $businessId = ConfigApp::$orgId;
+        }
+
         // Build the payload
         $payload = [
             'applicationId' => 'urn:aid:' . ConfigApp::$appId,
-            'businessId'    => ConfigApp::$orgId, // Developer organization ID, NOT business ID
+            'businessId'    => $businessId,
             'deliveryUrl'   => ConfigApp::$webRootUrl . '/webhooks/event-listener',
             'eventTypes'    => $events
         ];
