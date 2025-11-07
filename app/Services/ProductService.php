@@ -185,6 +185,79 @@ class ProductService
     }
 
     /**
+     * Fetch a single product by its identifier.
+     *
+     * @param string $productId
+     * @param string|null $businessId
+     * @return array|null
+     */
+    public function fetchById(string $productId, ?string $businessId = null): ?array
+    {
+        $businessId = $businessId ?? $this->businessId;
+        if (!$businessId) {
+            $this->context->getLog()->warning(
+                sprintf('ProductService::fetchById: missing businessId for product_id=%s', $productId)
+            );
+
+            return null;
+        }
+
+        $tokenService = new TokenService($this->context);
+        $accessToken = $tokenService->getMerchantToken($businessId);
+
+        if (!$accessToken) {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'ProductService::fetchById: missing merchant token for business_id=%s, product_id=%s',
+                    $businessId,
+                    $productId
+                )
+            );
+
+            return null;
+        }
+
+        $url = sprintf('%s/%s/products/%s', self::POYNT_ENDPOINT, $businessId, $productId);
+
+        try {
+            $response = $this->httpClient->get($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $data = json_decode((string)$response->getBody(), true);
+            if (!is_array($data)) {
+                return null;
+            }
+
+            FetchResponseLogger::info(
+                $this->context->getLog(),
+                'ProductService::fetchById response',
+                [
+                    'businessId' => $businessId,
+                    'productId' => $productId,
+                    'entity' => 'product',
+                    'payload' => $data,
+                ]
+            );
+
+            return $data;
+        } catch (GuzzleException $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'ProductService::fetchById: failed for business_id=%s, product_id=%s: %s',
+                    $businessId,
+                    $productId,
+                    $e->getMessage()
+                )
+            );
+
+            return null;
+        }
+    }
+
+    /**
      * Fetch products for a business from the Poynt API.
      *
      * @param string|null $businessId
