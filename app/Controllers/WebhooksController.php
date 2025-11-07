@@ -416,15 +416,49 @@ class WebhooksController extends Controller
             ['product'],
         ]);
 
-        if ($product === null) {
-            $this->context->getLog()->warning('Webhook product event missing payload', $payload);
+        $businessId = $payload['businessId'] ?? null;
+        $productId = $payload['resourceId'] ?? null;
+        $service = null;
 
-            return;
+        if ($product === null) {
+            if ($productId === null) {
+                $productId = $payload['productId'] ?? $this->extractContextValue($payload, 'productId');
+            }
+
+            if (($businessId === null || $productId === null) && isset($payload['links']) && is_array($payload['links'])) {
+                foreach ($payload['links'] as $link) {
+                    if (!is_array($link) || empty($link['href'])) {
+                        continue;
+                    }
+
+                    $href = (string) $link['href'];
+                    if ($businessId === null && preg_match('#/businesses/([a-zA-Z0-9\-]+)/#', $href, $matches)) {
+                        $businessId = $matches[1];
+                    }
+                    if ($productId === null && preg_match('#/products/([a-zA-Z0-9\-]+)#', $href, $matches)) {
+                        $productId = $matches[1];
+                    }
+                }
+            }
+
+            $service = $this->getServiceFactory()->product($businessId);
+
+            if ($productId !== null) {
+                $product = $service->fetchById($productId, $businessId);
+            }
+
+            if ($product === null) {
+                $this->context->getLog()->warning('Webhook product event missing payload', $payload);
+
+                return;
+            }
+        }
+
+        if ($service === null) {
+            $service = $this->getServiceFactory()->product($product['businessId'] ?? $businessId);
         }
 
         $product = $this->enrichResourceWithContext($product, $payload, ['businessId']);
-
-        $service = $this->getServiceFactory()->product($product['businessId'] ?? null);
         $service->upsert($product);
     }
 

@@ -415,6 +415,72 @@ namespace Controllers {
             self::assertSame(Response::STATUS_OK, $last['status']);
         }
 
+        public function testWebhookEndpointFetchesProductWhenPayloadMissing(): void
+        {
+            $payload = [
+                'eventType' => 'PRODUCT_CREATED',
+                'businessId' => 'biz-2',
+                'resourceId' => 'prod-2',
+                'links' => [
+                    [
+                        'href' => 'https://services.poynt.net/businesses/biz-2/products/prod-2',
+                        'rel' => 'resource',
+                        'method' => 'GET',
+                    ],
+                ],
+            ];
+
+            $api = $this->createApi($payload, 'POST');
+
+            $connection = $this->createMock(Connection::class);
+            $connection->expects(self::once())->method('insert')->with('webhook_audit', self::anything(), self::anything());
+            $connection->expects(self::once())->method('lastInsertId')->willReturn('43');
+            $connection->expects(self::once())->method('update');
+
+            $context = $this->createContext($api, $connection);
+
+            $productService = $this->getMockBuilder(ProductService::class)
+                ->disableOriginalConstructor()
+                ->onlyMethods(['fetchById', 'upsert'])
+                ->getMock();
+
+            $productService->expects(self::once())
+                ->method('fetchById')
+                ->with('prod-2', 'biz-2')
+                ->willReturn([
+                    'id' => 'prod-2',
+                    'businessId' => 'biz-2',
+                    'name' => 'Fetched Product',
+                ]);
+
+            $productService->expects(self::once())
+                ->method('upsert')
+                ->with(self::callback(static function (array $data): bool {
+                    return $data['id'] === 'prod-2'
+                        && $data['businessId'] === 'biz-2'
+                        && $data['name'] === 'Fetched Product';
+                }));
+
+            $factory = $this->getMockBuilder(ServiceFactory::class)
+                ->disableOriginalConstructor()
+                ->onlyMethods(['product'])
+                ->getMock();
+
+            $factory->expects(self::once())
+                ->method('product')
+                ->with('biz-2')
+                ->willReturn($productService);
+
+            $controller = new WebhooksController($context);
+            $controller->setServiceFactory($factory);
+
+            $controller->eventListener();
+
+            $last = Api::getLastResponse();
+            self::assertNotNull($last);
+            self::assertSame(Response::STATUS_OK, $last['status']);
+        }
+
         public function testWebhookEndpointProcessesInventoryEvent(): void
         {
             $payload = [
