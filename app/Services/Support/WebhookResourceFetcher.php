@@ -32,6 +32,17 @@ class WebhookResourceFetcher
         $resource = $this->normalizeResourceKey($payload['resource'] ?? $this->inferResourceFromEvent($payload['eventType'] ?? ''));
         $resourceId = $this->resolveResourceId($payload);
         $businessId = $this->extractBusinessId($payload);
+        $eventType = (string)($payload['eventType'] ?? '');
+
+        $normalizedResource = $resource !== null ? strtolower(trim($resource, '/')) : null;
+        $isCatalogResource = $normalizedResource === 'catalog' || $normalizedResource === 'catalogs' || str_starts_with(strtoupper($eventType), 'CATALOG_');
+
+        if ($isCatalogResource) {
+            $catalog = $this->getFullCatalog($payload, $resourceId, $businessId, $eventType);
+            if ($catalog !== null) {
+                return $catalog;
+            }
+        }
 
         if ($resource !== null) {
             $embedded = $this->extractEmbeddedEntity($payload, $resource, $resourceId);
@@ -49,7 +60,6 @@ class WebhookResourceFetcher
             return null;
         }
 
-        $eventType = (string)($payload['eventType'] ?? '');
         $bearer = $this->resolveAuthToken($href, $eventType, $businessId);
         if ($bearer === null) {
             $this->logger->warning('WebhookResourceFetcher: unable to resolve auth token', [
@@ -62,7 +72,162 @@ class WebhookResourceFetcher
             return null;
         }
 
-        return $this->httpGetJson($href, $bearer);
+        $response = $this->requestJson($href, $bearer);
+
+        return $response['status'] === 200 ? $response['data'] : null;
+    }
+
+    private function getFullCatalog(array $payload, ?string $resourceId, ?string $businessId, string $eventType): ?array
+    {
+        $embedded = $this->extractEmbeddedEntity($payload, 'catalog', $resourceId);
+        if ($embedded !== null) {
+            return $this->normalizeCatalogPayload($embedded, $payload, $resourceId, $businessId);
+        }
+
+        $href = $this->findResourceHref($payload);
+        if ($href === null && $resourceId !== null) {
+            $href = $this->buildCatalogFallbackUrl($resourceId, $businessId);
+        }
+
+        if ($href === null) {
+            return null;
+        }
+
+        $catalog = $this->fetchCatalogFromUrl($href, $eventType, $businessId);
+        if ($catalog === null) {
+            return null;
+        }
+
+        return $this->normalizeCatalogPayload($catalog, $payload, $resourceId, $businessId);
+    }
+
+    private function buildCatalogFallbackUrl(string $catalogId, ?string $businessId): ?string
+    {
+        if ($businessId !== null && $businessId !== '') {
+            return sprintf('%s/businesses/%s/catalogs/%s', self::POYNT_BASE_URL, $businessId, $catalogId);
+        }
+
+        return sprintf('%s/catalogs/%s', self::POYNT_BASE_URL, $catalogId);
+    }
+
+    private function fetchCatalogFromUrl(string $url, string $eventType, ?string $businessId): ?array
+    {
+        $isMerchantScoped = $this->isMerchantScopedUrl($url);
+
+        if ($isMerchantScoped && $businessId !== null) {
+            $merchantToken = $this->loadMerchantToken($businessId);
+            if ($merchantToken !== null) {
+                $response = $this->requestJson($url, $merchantToken);
+                if ($response['status'] === 200) {
+                    return $response['data'];
+                }
+
+                if ($response['status'] === 401 || $response['status'] === 403) {
+                    $appToken = $this->loadAppToken($businessId);
+                    if ($appToken !== null) {
+                        $retry = $this->requestJson($url, $appToken);
+                        if ($retry['status'] === 200) {
+                            return $retry['data'];
+                        }
+                    }
+
+                    return null;
+                }
+
+                if ($response['status'] === 200) {
+                    return null;
+                }
+            } else {
+                $this->logger->warning('WebhookResourceFetcher: merchant token unavailable for catalog fetch', [
+                    'businessId' => $businessId,
+                    'url' => $url,
+                ]);
+
+                $appToken = $this->loadAppToken($businessId);
+                if ($appToken !== null) {
+                    $response = $this->requestJson($url, $appToken);
+                    if ($response['status'] === 200) {
+                        return $response['data'];
+                    }
+                }
+
+                return null;
+            }
+
+            return null;
+        }
+
+        $bearer = $this->resolveAuthToken($url, $eventType, $businessId);
+        if ($bearer === null) {
+            $this->logger->warning('WebhookResourceFetcher: unable to resolve auth token', [
+                'businessId' => $businessId,
+                'eventType' => $eventType,
+                'url' => $url,
+            ]);
+
+            return null;
+        }
+
+        $response = $this->requestJson($url, $bearer);
+
+        return $response['status'] === 200 ? $response['data'] : null;
+    }
+
+    private function normalizeCatalogPayload(array $catalogPayload, array $fullPayload, ?string $resourceId, ?string $businessId): array
+    {
+        $catalog = $catalogPayload;
+
+        if (isset($catalogPayload['catalog']) && is_array($catalogPayload['catalog'])) {
+            $catalog = $catalogPayload['catalog'];
+            $catalog = $this->mergeCatalogCollections($catalog, $catalogPayload);
+        }
+
+        if (isset($fullPayload['catalog']) && is_array($fullPayload['catalog']) && empty($catalog)) {
+            $catalog = $fullPayload['catalog'];
+        }
+
+        if (!isset($catalog['products']) && isset($catalogPayload['products']) && is_array($catalogPayload['products'])) {
+            $catalog['products'] = $catalogPayload['products'];
+        }
+
+        if (!isset($catalog['categories']) && isset($catalogPayload['categories']) && is_array($catalogPayload['categories'])) {
+            $catalog['categories'] = $catalogPayload['categories'];
+        }
+
+        if (!isset($catalog['displayMetadata']) && isset($catalogPayload['displayMetadata'])) {
+            $catalog['displayMetadata'] = $catalogPayload['displayMetadata'];
+        }
+
+        if (!isset($catalog['taxes']) && isset($catalogPayload['taxes']) && is_array($catalogPayload['taxes'])) {
+            $catalog['taxes'] = $catalogPayload['taxes'];
+        }
+
+        if (!isset($catalog['availableDiscounts']) && isset($catalogPayload['availableDiscounts']) && is_array($catalogPayload['availableDiscounts'])) {
+            $catalog['availableDiscounts'] = $catalogPayload['availableDiscounts'];
+        }
+
+        $catalog = $this->mergeCatalogCollections($catalog, $fullPayload);
+
+        if ($resourceId !== null && !isset($catalog['id'])) {
+            $catalog['id'] = $resourceId;
+        }
+
+        if ($businessId !== null && !isset($catalog['businessId'])) {
+            $catalog['businessId'] = $businessId;
+        }
+
+        return $catalog;
+    }
+
+    private function mergeCatalogCollections(array $catalog, array $wrapper): array
+    {
+        foreach (['products', 'categories', 'displayMetadata', 'taxes', 'availableDiscounts'] as $key) {
+            if (!isset($catalog[$key]) && isset($wrapper[$key])) {
+                $catalog[$key] = $wrapper[$key];
+            }
+        }
+
+        return $catalog;
     }
 
     private function extractEmbeddedEntity(array $payload, string $resource, ?string $resourceId): ?array
@@ -357,6 +522,16 @@ class WebhookResourceFetcher
 
     public function httpGetJson(string $url, string $bearer): ?array
     {
+        $response = $this->requestJson($url, $bearer);
+
+        return $response['status'] === 200 ? $response['data'] : null;
+    }
+
+    /**
+     * @return array{status:int,data:?array}
+     */
+    private function requestJson(string $url, string $bearer): array
+    {
         $attempt = 0;
         $options = [
             'headers' => [
@@ -373,11 +548,11 @@ class WebhookResourceFetcher
             } catch (GuzzleException $exception) {
                 $this->logger->error('WebhookResourceFetcher: HTTP request failed', [
                     'url' => $url,
-                    'attempt' => $attempt + 1,
+                    'attempt' => $attempt,
                     'error' => $exception->getMessage(),
                 ]);
 
-                return null;
+                break;
             }
 
             $status = $response->getStatusCode();
@@ -385,7 +560,7 @@ class WebhookResourceFetcher
                 $body = (string) $response->getBody();
                 $decoded = json_decode($body, true);
                 if (is_array($decoded)) {
-                    return $decoded;
+                    return ['status' => 200, 'data' => $decoded];
                 }
 
                 $this->logger->error('WebhookResourceFetcher: invalid JSON response', [
@@ -394,7 +569,7 @@ class WebhookResourceFetcher
                     'body' => $body,
                 ]);
 
-                return null;
+                return ['status' => 200, 'data' => null];
             }
 
             if ($status === 404) {
@@ -402,7 +577,7 @@ class WebhookResourceFetcher
                     'url' => $url,
                 ]);
 
-                return null;
+                return ['status' => 404, 'data' => null];
             }
 
             if ($status === 401 || $status === 403) {
@@ -411,7 +586,7 @@ class WebhookResourceFetcher
                     'status' => $status,
                 ]);
 
-                return null;
+                return ['status' => $status, 'data' => null];
             }
 
             if ($status === 429) {
@@ -434,9 +609,9 @@ class WebhookResourceFetcher
                 'status' => $status,
             ]);
 
-            return null;
+            return ['status' => $status, 'data' => null];
         }
 
-        return null;
+        return ['status' => 0, 'data' => null];
     }
 }
