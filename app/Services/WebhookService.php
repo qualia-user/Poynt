@@ -727,7 +727,7 @@ class WebhookService
                 'Authorization' => 'Bearer ' . $appToken,
             ],
             'query' => [
-                'businessId' => ConfigApp::$orgId,
+                'businessId' => $businessId,
             ],
         ];
 
