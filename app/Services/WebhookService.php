@@ -49,8 +49,7 @@ class WebhookService
     public function registerWebhook(string $merchantAccessToken, array $events): mixed
     {
         $businessId = $this->businessId;
-        // When dealing with subscription event use, developer organization ID, NOT business ID
-        if (in_array('APPLICATION_SUBSCRIPTION_START', $events)) {
+        if ($this->eventsRequireOrgId($events)) {
             $businessId = ConfigApp::$orgId;
         }
 
@@ -493,6 +492,18 @@ class WebhookService
             }
 
             $deliveries = $this->fetchDeliveriesForBusiness($businessId, $merchantToken);
+
+            $orgBusinessId = ConfigApp::$orgId ?? '';
+            if (
+                is_string($orgBusinessId)
+                && $orgBusinessId !== ''
+                && $orgBusinessId !== $businessId
+            ) {
+                $orgDeliveries = $this->fetchDeliveriesForBusiness($orgBusinessId, $merchantToken);
+                if ($orgDeliveries !== []) {
+                    $deliveries = array_merge($deliveries, $orgDeliveries);
+                }
+            }
             $deliveriesByHook = [];
             $deliveriesMissingHookId = [];
             foreach ($deliveries as $delivery) {
@@ -675,6 +686,23 @@ class WebhookService
 
             $hookId = $hook['id'];
 
+            $hookBusinessId = $hook['businessId'] ?? null;
+            if (!is_string($hookBusinessId) || $hookBusinessId === '') {
+                $hookBusinessId = $businessId;
+            }
+
+            $eventTypes = [];
+            if (isset($hook['eventTypes'])) {
+                $eventTypes = is_array($hook['eventTypes']) ? $hook['eventTypes'] : [$hook['eventTypes']];
+            }
+
+            if ($this->eventsRequireOrgId($eventTypes)) {
+                $orgId = ConfigApp::$orgId ?? '';
+                if (is_string($orgId) && $orgId !== '') {
+                    $hookBusinessId = $orgId;
+                }
+            }
+
             try {
                 $this->httpClient->delete(
                     self::POYNT_WEBHOOK_URL . '/' . rawurlencode($hookId),
@@ -683,7 +711,7 @@ class WebhookService
                             'Authorization' => 'Bearer ' . $accessToken,
                         ],
                         'query' => [
-                            'businessId' => $businessId,
+                            'businessId' => $hookBusinessId,
                         ],
                     ]
                 );
@@ -692,7 +720,7 @@ class WebhookService
                     sprintf(
                         'WebhookService::deleteAllByBusinessId: deleted hook %s for business %s',
                         $hookId,
-                        $businessId
+                        $hookBusinessId
                     )
                 );
             } catch (BadResponseException|GuzzleException $e) {
@@ -700,7 +728,7 @@ class WebhookService
                     sprintf(
                         'WebhookService::deleteAllByBusinessId: failed deleting hook %s for business %s: %s',
                         $hookId,
-                        $businessId,
+                        $hookBusinessId,
                         $e->getMessage()
                     )
                 );
@@ -712,7 +740,7 @@ class WebhookService
     }
 
     /**
-     * Fetch all hooks for the configured developer organization, following pagination links.
+     * Fetch all hooks associated with the merchant business as well as any organization-scoped entries.
      *
      * @param string $businessId
      * @param string $appToken
@@ -722,12 +750,56 @@ class WebhookService
      */
     private function fetchAllHooks(string $businessId, string $appToken): array|false
     {
+        $hooksById = [];
+        $anonymousHooks = [];
+
+        $businessIds = [$businessId];
+        $orgId = ConfigApp::$orgId ?? '';
+        if (is_string($orgId) && $orgId !== '' && $orgId !== $businessId) {
+            $businessIds[] = $orgId;
+        }
+
+        foreach ($businessIds as $targetBusinessId) {
+            $pageHooks = $this->fetchHooksForBusiness($targetBusinessId, $appToken);
+            if ($pageHooks === false) {
+                return false;
+            }
+
+            foreach ($pageHooks as $hook) {
+                if (!is_array($hook)) {
+                    continue;
+                }
+
+                $hookId = $hook['id'] ?? null;
+                if (is_string($hookId) && $hookId !== '') {
+                    $hooksById[$hookId] = $hook;
+                    continue;
+                }
+
+                $anonymousHooks[] = $hook;
+            }
+        }
+
+        return array_merge(array_values($hooksById), $anonymousHooks);
+    }
+
+    /**
+     * Fetch hooks for a specific business identifier, following pagination links.
+     *
+     * @param string $businessId
+     * @param string $appToken
+     * @return array<int, mixed>|false
+     * @throws BadResponseException
+     * @throws GuzzleException
+     */
+    private function fetchHooksForBusiness(string $businessId, string $appToken): array|false
+    {
         $options = [
             'headers' => [
                 'Authorization' => 'Bearer ' . $appToken,
             ],
             'query' => [
-                'businessId' => ConfigApp::$orgId,
+                'businessId' => $businessId,
             ],
         ];
 
@@ -759,12 +831,7 @@ class WebhookService
                     continue;
                 }
 
-                $hookId = $hook['id'] ?? null;
-                if (is_string($hookId) && $hookId !== '') {
-                    $hooks[$hookId] = $hook;
-                } else {
-                    $hooks[] = $hook;
-                }
+                $hooks[] = $hook;
             }
 
             $nextCandidate = $this->extractNextHooksUrl($payload);
@@ -780,7 +847,7 @@ class WebhookService
             $nextUrl = $nextCandidate;
         }
 
-        return array_values($hooks);
+        return $hooks;
     }
 
     private function fetchDeliveriesForBusiness(string $businessId, string $accessToken): array
@@ -830,6 +897,24 @@ class WebhookService
             );
             return [];
         }
+    }
+
+    /**
+     * @param array<int, mixed> $events
+     */
+    private function eventsRequireOrgId(array $events): bool
+    {
+        foreach ($events as $event) {
+            if (!is_string($event)) {
+                continue;
+            }
+
+            if (str_starts_with($event, 'APPLICATION_SUBSCRIPTION_')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function normalizeHooks(mixed $payload): array|false
@@ -916,6 +1001,18 @@ class WebhookService
         foreach ($requiredKeys as $key) {
             if (!array_key_exists($key, $flattened)) {
                 $flattened[$key] = null;
+            }
+        }
+
+        $eventTypes = $flattened['eventTypes'];
+        if (!is_array($eventTypes)) {
+            $eventTypes = $eventTypes === null ? [] : [$eventTypes];
+        }
+
+        if ($this->eventsRequireOrgId($eventTypes)) {
+            $orgBusinessId = ConfigApp::$orgId ?? '';
+            if (is_string($orgBusinessId) && $orgBusinessId !== '') {
+                $flattened['businessId'] = $orgBusinessId;
             }
         }
 
