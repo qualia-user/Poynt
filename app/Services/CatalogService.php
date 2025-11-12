@@ -88,13 +88,17 @@ class CatalogService
 
             $this->context->getLog()->info("CatalogService::upsert: upserted catalog {$catalogId}");
             $products = $this->resolveCatalogProducts($catalogData);
-            $this->syncCatalogProducts($catalogId, $products);
+            if ($products !== null) {
+                $this->syncCatalogProducts($catalogId, $products);
+            }
             $availableDiscounts = $this->resolveCatalogAvailableDiscounts($catalogData);
             if (!empty($availableDiscounts)) {
                 $this->syncCatalogAvailableDiscounts($catalogId, $availableDiscounts);
             }
             $categories = $this->resolveCatalogCategories($catalogData);
-            $this->syncCatalogCategories($catalogId, $businessId, $categories);
+            if ($categories !== null) {
+                $this->syncCatalogCategories($catalogId, $businessId, $categories);
+            }
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
@@ -231,20 +235,20 @@ class CatalogService
         return [];
     }
 
-    private function resolveCatalogProducts(array $catalogData): array
+    private function resolveCatalogProducts(array $catalogData): ?array
     {
-        if (isset($catalogData['products']) && is_array($catalogData['products'])) {
-            return $catalogData['products'];
+        if (array_key_exists('products', $catalogData)) {
+            return is_array($catalogData['products']) ? $catalogData['products'] : [];
         }
 
         if (isset($catalogData['catalog']) && is_array($catalogData['catalog'])) {
             $innerCatalog = $catalogData['catalog'];
-            if (isset($innerCatalog['products']) && is_array($innerCatalog['products'])) {
-                return $innerCatalog['products'];
+            if (array_key_exists('products', $innerCatalog)) {
+                return is_array($innerCatalog['products']) ? $innerCatalog['products'] : [];
             }
         }
 
-        return [];
+        return null;
     }
 
     private function resolveCatalogAvailableDiscounts(array $catalogData): array
@@ -263,20 +267,20 @@ class CatalogService
         return [];
     }
 
-    private function resolveCatalogCategories(array $catalogData): array
+    private function resolveCatalogCategories(array $catalogData): ?array
     {
-        if (isset($catalogData['categories']) && is_array($catalogData['categories'])) {
-            return $catalogData['categories'];
+        if (array_key_exists('categories', $catalogData)) {
+            return is_array($catalogData['categories']) ? $catalogData['categories'] : [];
         }
 
         if (isset($catalogData['catalog']) && is_array($catalogData['catalog'])) {
             $innerCatalog = $catalogData['catalog'];
-            if (isset($innerCatalog['categories']) && is_array($innerCatalog['categories'])) {
-                return $innerCatalog['categories'];
+            if (array_key_exists('categories', $innerCatalog)) {
+                return is_array($innerCatalog['categories']) ? $innerCatalog['categories'] : [];
             }
         }
 
-        return [];
+        return null;
     }
 
     private function syncCatalogProducts(string $catalogId, array $products): void
