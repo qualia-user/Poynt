@@ -102,7 +102,8 @@ class ProductService
                 ]
             );
 
-            $this->upsertVariants($productId, $productData['variants'] ?? []);
+            $variants = $this->prepareVariants($productData);
+            $this->upsertVariants($productId, $variants);
 
             $this->context->getLog()->info("ProductService::upsert: upserted product {$productId}");
             return true;
@@ -123,65 +124,199 @@ class ProductService
      */
     public function upsertVariants(string $productId, array $variants): void
     {
-        if (empty($variants)) {
-            return;
+        try {
+            $existingVariantIds = $this->context->getConn()->fetchFirstColumn(
+                'SELECT variant_id FROM product_variant WHERE product_id = ?',
+                [$productId]
+            );
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'ProductService::upsertVariants: failed to fetch existing variants for product_id=%s: %s',
+                    $productId,
+                    $e->getMessage()
+                )
+            );
+            $existingVariantIds = [];
         }
 
-        $sql = 'INSERT INTO product_variant (
-                product_id, variant_id, name, sku, price_minor,
-                attributes, raw_payload,
-                created_at_ext, updated_at_ext,
-                created_at, updated_at
-            ) VALUES (
-                :productId, :variantId, :name, :sku, :priceMinor,
-                :attributes, :rawPayload,
-                :createdAtExt, :updatedAtExt,
-                :createdAt, :updatedAt
-            ) ON CONFLICT (product_id, variant_id) DO UPDATE SET
-                name = EXCLUDED.name,
-                sku = EXCLUDED.sku,
-                price_minor = EXCLUDED.price_minor,
-                attributes = EXCLUDED.attributes,
-                raw_payload = EXCLUDED.raw_payload,
-                created_at_ext = EXCLUDED.created_at_ext,
-                updated_at_ext = EXCLUDED.updated_at_ext,
-                updated_at = EXCLUDED.updated_at';
+        $existingVariantIds = array_values(
+            array_unique(
+                array_map(
+                    static fn ($value): string => (string) $value,
+                    array_filter(
+                        is_array($existingVariantIds) ? $existingVariantIds : [],
+                        static fn ($value): bool => $value !== null && $value !== ''
+                    )
+                )
+            )
+        );
 
-        $stmt = $this->context->getConn()->prepare($sql);
-        $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
+        $upsertedIds = [];
 
-        foreach ($variants as $variant) {
-            if (!isset($variant['id'])) {
-                $this->context->getLog()->error('ProductService::upsertVariants: missing variant id');
+        if (!empty($variants)) {
+            $sql = 'INSERT INTO product_variant (
+                    product_id, variant_id, name, sku, price_minor,
+                    attributes, raw_payload,
+                    created_at_ext, updated_at_ext,
+                    created_at, updated_at
+                ) VALUES (
+                    :productId, :variantId, :name, :sku, :priceMinor,
+                    :attributes, :rawPayload,
+                    :createdAtExt, :updatedAtExt,
+                    :createdAt, :updatedAt
+                ) ON CONFLICT (product_id, variant_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    sku = EXCLUDED.sku,
+                    price_minor = EXCLUDED.price_minor,
+                    attributes = EXCLUDED.attributes,
+                    raw_payload = EXCLUDED.raw_payload,
+                    created_at_ext = EXCLUDED.created_at_ext,
+                    updated_at_ext = EXCLUDED.updated_at_ext,
+                    updated_at = EXCLUDED.updated_at';
+
+            $stmt = $this->context->getConn()->prepare($sql);
+            $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
+
+            foreach ($variants as $variant) {
+                if (!is_array($variant)) {
+                    continue;
+                }
+
+                $variantId = $variant['id'] ?? $variant['variantId'] ?? null;
+                if (!$variantId) {
+                    $this->context->getLog()->error('ProductService::upsertVariants: missing variant id');
+                    continue;
+                }
+
+                $upsertedIds[] = (string) $variantId;
+
+                $name = $variant['name'] ?? null;
+                $sku = $variant['sku'] ?? null;
+                $priceMinor = Format::amount($variant['price'] ?? ($variant['priceAmount'] ?? null));
+                if ($priceMinor === null && isset($variant['price']['amount'])) {
+                    $priceMinor = Format::amount($variant['price']['amount']);
+                }
+
+                if ($priceMinor === null && isset($variant['priceDelta'])) {
+                    $priceMinor = Format::amount($variant['priceDelta']);
+                }
+
+                $attributesSource = $variant['attributes'] ?? ($variant['selectableVariations'] ?? []);
+                $attributes = Format::jsonObject($attributesSource);
+                $rawPayload = Format::jsonObject($variant);
+                $createdAtExt = Format::optionalTimestamp($variant['createdAt'] ?? null);
+                $updatedAtExt = Format::optionalTimestamp($variant['updatedAt'] ?? null);
+
+                try {
+                    $stmt->executeStatement([
+                        'productId' => $productId,
+                        'variantId' => $variantId,
+                        'name' => $name,
+                        'sku' => $sku,
+                        'priceMinor' => $priceMinor,
+                        'attributes' => $attributes,
+                        'rawPayload' => $rawPayload,
+                        'createdAtExt' => $createdAtExt,
+                        'updatedAtExt' => $updatedAtExt,
+                        'createdAt' => $now,
+                        'updatedAt' => $now,
+                    ]);
+                } catch (\Throwable $e) {
+                    $this->context->getLog()->error(
+                        sprintf(
+                            'ProductService::upsertVariants: database error for product_id=%s, variant_id=%s: %s',
+                            $productId,
+                            $variantId,
+                            $e->getMessage()
+                        )
+                    );
+                }
+            }
+        }
+
+        $upsertedIds = array_values(array_unique($upsertedIds));
+        $toDelete = array_diff($existingVariantIds, $upsertedIds);
+
+        foreach ($toDelete as $variantId) {
+            try {
+                $this->context->getConn()->executeStatement(
+                    'DELETE FROM product_variant WHERE product_id = :productId AND variant_id = :variantId',
+                    [
+                        'productId' => $productId,
+                        'variantId' => $variantId,
+                    ]
+                );
+            } catch (\Throwable $e) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'ProductService::upsertVariants: failed to delete variant_id=%s for product_id=%s: %s',
+                        $variantId,
+                        $productId,
+                        $e->getMessage()
+                    )
+                );
+            }
+        }
+    }
+
+    private function prepareVariants(array $productData): array
+    {
+        $variants = $productData['variants'] ?? [];
+
+        if (!empty($variants)) {
+            return $variants;
+        }
+
+        $selectableVariants = $productData['selectableVariants'] ?? null;
+        if (!is_array($selectableVariants) || empty($selectableVariants)) {
+            return [];
+        }
+
+        $prepared = [];
+        $productId = (string) ($productData['id'] ?? '');
+
+        foreach ($selectableVariants as $selectableVariant) {
+            if (!is_array($selectableVariant)) {
                 continue;
             }
 
-            $variantId = $variant['id'];
-            $name = $variant['name'] ?? null;
-            $sku = $variant['sku'] ?? null;
-            $priceMinor = Format::amount($variant['price'] ?? ($variant['priceAmount'] ?? null));
-            if ($priceMinor === null && isset($variant['price']['amount'])) {
-                $priceMinor = Format::amount($variant['price']['amount']);
-            }
-            $attributes = Format::jsonObject($variant['attributes'] ?? []);
-            $rawPayload = Format::jsonObject($variant);
-            $createdAtExt = Format::optionalTimestamp($variant['createdAt'] ?? null);
-            $updatedAtExt = Format::optionalTimestamp($variant['updatedAt'] ?? null);
+            $attributes = $selectableVariant['attributes'] ?? ($selectableVariant['selectableVariations'] ?? []);
+            $variantId = $selectableVariant['id']
+                ?? $selectableVariant['variantId']
+                ?? $this->generateVariantId(
+                    $productId,
+                    (string) ($selectableVariant['sku'] ?? ''),
+                    $attributes
+                );
 
-            $stmt->executeStatement([
-                'productId' => $productId,
-                'variantId' => $variantId,
-                'name' => $name,
-                'sku' => $sku,
-                'priceMinor' => $priceMinor,
-                'attributes' => $attributes,
-                'rawPayload' => $rawPayload,
-                'createdAtExt' => $createdAtExt,
-                'updatedAtExt' => $updatedAtExt,
-                'createdAt' => $now,
-                'updatedAt' => $now,
-            ]);
+            $selectableVariant['id'] = $variantId;
+            if (!isset($selectableVariant['attributes']) && isset($selectableVariant['selectableVariations'])) {
+                $selectableVariant['attributes'] = $selectableVariant['selectableVariations'];
+            }
+
+            $prepared[] = $selectableVariant;
         }
+
+        return $prepared;
+    }
+
+    private function generateVariantId(string $productId, string $sku, mixed $attributes): string
+    {
+        $payload = [$productId, $sku];
+
+        if (is_array($attributes) || is_object($attributes)) {
+            $encoded = json_encode($attributes);
+            if ($encoded !== false) {
+                $payload[] = $encoded;
+            }
+        } elseif ($attributes !== null) {
+            $payload[] = (string) $attributes;
+        }
+
+        $hashSource = implode('|', $payload);
+
+        return substr(hash('sha256', $hashSource), 0, 32);
     }
 
     /**
