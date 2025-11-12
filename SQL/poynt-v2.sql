@@ -402,6 +402,8 @@ CREATE TABLE product_variant (
   raw_payload     JSONB NOT NULL DEFAULT '{}',
   created_at_ext  TIMESTAMPTZ,
   updated_at_ext  TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (product_id, variant_id)
 );
 
