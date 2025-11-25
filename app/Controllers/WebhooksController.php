@@ -7,6 +7,7 @@ use App\Core\Context;
 use App\Core\Response;
 use App\Services\ServiceFactory;
 use App\Services\SubscriptionService;
+use App\Services\Support\WebhookResourceFetcher;
 use App\Services\WebhookService;
 use Doctrine\DBAL\Exception;
 use PDO;
@@ -15,11 +16,28 @@ class WebhooksController extends Controller
 {
     private SubscriptionService $subscriptionService;
     private ?ServiceFactory $serviceFactory = null;
+    private WebhookResourceFetcher $resourceFetcher;
+
+    /**
+     * @var array<string, array{factory: string, businessScoped: bool}>
+     */
+    private const RESOURCE_SERVICE_MAP = [
+        'catalog' => ['factory' => 'catalog', 'businessScoped' => true],
+        'category' => ['factory' => 'category', 'businessScoped' => true],
+        'inventory' => ['factory' => 'inventory', 'businessScoped' => true],
+        'order' => ['factory' => 'order', 'businessScoped' => true],
+        'product' => ['factory' => 'product', 'businessScoped' => true],
+        'store' => ['factory' => 'store', 'businessScoped' => true],
+        'tax' => ['factory' => 'tax', 'businessScoped' => true],
+        'transaction' => ['factory' => 'transaction', 'businessScoped' => true],
+        'businessuser' => ['factory' => 'businessUser', 'businessScoped' => true],
+    ];
 
     public function __construct(Context $context)
     {
         parent::__construct($context);
         $this->subscriptionService = new SubscriptionService($context);
+        $this->resourceFetcher = new WebhookResourceFetcher($context);
     }
 
     /**
@@ -262,109 +280,260 @@ class WebhooksController extends Controller
         return $this->serviceFactory;
     }
 
-    private function handleBusinessUserEvent(array $payload): void
+    private function processResourceEvent(array $payload, string $resource): void
     {
-        $businessUser = $this->extractResource($payload, [
-            ['businessUser'],
-            ['user'],
-        ]);
-
-        if ($businessUser === null) {
-            $this->context->getLog()->warning('Webhook business user event missing payload', $payload);
+        $normalizedResource = strtolower($resource);
+        if (!isset(self::RESOURCE_SERVICE_MAP[$normalizedResource])) {
+            $this->context->getLog()->warning('Webhook dispatch: unsupported resource', [
+                'resource' => $resource,
+                'eventType' => $payload['eventType'] ?? null,
+            ]);
 
             return;
         }
 
-        $businessUser = $this->enrichResourceWithContext($businessUser, $payload, ['businessId']);
+        $eventType = (string)($payload['eventType'] ?? '');
+        $isDelete = $this->isDeleteEvent($eventType);
+        $entity = $this->resourceFetcher->getFullEntity($payload);
+        $resourceId = $this->resolveResourceIdFromPayload($payload, $entity);
+        $businessId = $this->resolveBusinessIdForResource($payload, $entity);
 
-        $service = $this->getServiceFactory()->businessUser($businessUser['businessId'] ?? null);
-        $service->upsert($businessUser);
+        if ($isDelete) {
+            if ($resourceId === null) {
+                $this->context->getLog()->error('Webhook dispatch: missing resource id for delete', [
+                    'resource' => $resource,
+                    'eventType' => $eventType,
+                ]);
+
+                return;
+            }
+
+            $this->dispatchDelete($normalizedResource, $resourceId, $businessId);
+
+            return;
+        }
+
+        if ($entity === null) {
+            $this->context->getLog()->warning('Webhook dispatch: missing entity payload', [
+                'resource' => $resource,
+                'eventType' => $eventType,
+            ]);
+
+            return;
+        }
+
+        if ($resourceId !== null && !isset($entity['id'])) {
+            $entity['id'] = $resourceId;
+        }
+
+        $config = self::RESOURCE_SERVICE_MAP[$normalizedResource];
+        if ($config['businessScoped']) {
+            if ($businessId === null) {
+                $this->context->getLog()->error('Webhook dispatch: missing businessId', [
+                    'resource' => $resource,
+                    'eventType' => $eventType,
+                ]);
+
+                return;
+            }
+
+            if (!isset($entity['businessId'])) {
+                $entity['businessId'] = $businessId;
+            }
+        } elseif ($businessId !== null && !isset($entity['businessId'])) {
+            $entity['businessId'] = $businessId;
+        }
+
+        if (!isset($entity['id'])) {
+            $this->context->getLog()->error('Webhook dispatch: entity missing id', [
+                'resource' => $resource,
+                'eventType' => $eventType,
+            ]);
+
+            return;
+        }
+
+        if ($config['businessScoped'] && !isset($entity['businessId'])) {
+            $this->context->getLog()->error('Webhook dispatch: entity missing businessId', [
+                'resource' => $resource,
+                'eventType' => $eventType,
+            ]);
+
+            return;
+        }
+
+        $this->dispatchUpsert($normalizedResource, $entity, $businessId);
+    }
+
+    private function resolveResourceIdFromPayload(array $payload, ?array $entity): ?string
+    {
+        if (is_array($entity) && isset($entity['id'])) {
+            $id = $entity['id'];
+            if ((is_string($id) || is_int($id)) && (string) $id !== '') {
+                return (string) $id;
+            }
+        }
+
+        $candidates = [
+            $payload['resourceId'] ?? null,
+            $payload['id'] ?? null,
+            $this->extractContextValue($payload, 'id'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if ((is_string($candidate) || is_int($candidate)) && (string) $candidate !== '') {
+                return (string) $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveBusinessIdForResource(array $payload, ?array $entity): ?string
+    {
+        if (is_array($entity) && isset($entity['businessId'])) {
+            $businessId = $entity['businessId'];
+            if ((is_string($businessId) || is_int($businessId)) && (string) $businessId !== '') {
+                return (string) $businessId;
+            }
+        }
+
+        $candidates = [
+            $payload['businessId'] ?? null,
+            $this->extractContextValue($payload, 'businessId'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if ((is_string($candidate) || is_int($candidate)) && (string) $candidate !== '') {
+                return (string) $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function dispatchUpsert(string $resource, array $entity, ?string $businessId): void
+    {
+        $service = $this->resolveService($resource, $entity['businessId'] ?? $businessId);
+        if ($service === null) {
+            $this->context->getLog()->warning('Webhook dispatch: missing service for upsert', [
+                'resource' => $resource,
+            ]);
+
+            return;
+        }
+
+        if (!method_exists($service, 'upsert')) {
+            $this->context->getLog()->warning('Webhook dispatch: service lacks upsert method', [
+                'resource' => $resource,
+                'service' => $service::class,
+            ]);
+
+            return;
+        }
+
+        try {
+            $service->upsert($entity);
+        } catch (\Throwable $exception) {
+            $this->context->getLog()->error('Webhook dispatch: upsert failed', [
+                'resource' => $resource,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    private function dispatchDelete(string $resource, string $id, ?string $businessId): void
+    {
+        $service = $this->resolveService($resource, $businessId);
+        if ($service === null) {
+            $this->context->getLog()->warning('Webhook dispatch: missing service for delete', [
+                'resource' => $resource,
+            ]);
+
+            return;
+        }
+
+        if (!method_exists($service, 'delete')) {
+            $this->context->getLog()->info('Webhook dispatch: delete skipped, method not available', [
+                'resource' => $resource,
+                'service' => $service::class,
+                'id' => $id,
+            ]);
+
+            return;
+        }
+
+        try {
+            $service->delete($id, $businessId);
+        } catch (\Throwable $exception) {
+            $this->context->getLog()->error('Webhook dispatch: delete failed', [
+                'resource' => $resource,
+                'id' => $id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    private function resolveService(string $resource, ?string $businessId): object|null
+    {
+        $config = self::RESOURCE_SERVICE_MAP[$resource] ?? null;
+        if ($config === null) {
+            return null;
+        }
+
+        $factory = $this->getServiceFactory();
+        $method = $config['factory'];
+
+        if (!method_exists($factory, $method)) {
+            $this->context->getLog()->warning('Webhook dispatch: factory method missing', [
+                'resource' => $resource,
+                'method' => $method,
+            ]);
+
+            return null;
+        }
+
+        return $factory->{$method}($businessId);
+    }
+
+    private function isDeleteEvent(string $eventType): bool
+    {
+        return str_ends_with($eventType, '_DELETED');
+    }
+
+    private function handleBusinessUserEvent(array $payload): void
+    {
+        $this->processResourceEvent($payload, 'businessUser');
     }
 
     private function handleCatalogEvent(array $payload): void
     {
-        $catalog = $this->extractResource($payload, [
-            ['catalog'],
-        ]);
-
-        if ($catalog === null) {
-            $this->context->getLog()->warning('Webhook catalog event missing payload', $payload);
-
-            return;
-        }
-
-        $catalog = $this->enrichResourceWithContext($catalog, $payload, ['businessId']);
-
-        $service = $this->getServiceFactory()->catalog($catalog['businessId'] ?? null);
-        $service->upsert($catalog);
+        $this->processResourceEvent($payload, 'catalog');
     }
 
     private function handleCatalogDeletion(array $payload): void
     {
-        $this->context->getLog()->info('Catalog deletion webhook received', $payload);
+        $this->processResourceEvent($payload, 'catalog');
     }
 
     private function handleCategoryEvent(array $payload): void
     {
-        $category = $this->extractResource($payload, [
-            ['category'],
-        ]);
-
-        if ($category === null) {
-            $this->context->getLog()->warning('Webhook category event missing payload', $payload);
-
-            return;
-        }
-
-        $category = $this->enrichResourceWithContext($category, $payload, ['businessId']);
-
-        $service = $this->getServiceFactory()->category($category['businessId'] ?? null);
-        $service->upsert($category);
+        $this->processResourceEvent($payload, 'category');
     }
 
     private function handleCategoryDeletion(array $payload): void
     {
-        $this->context->getLog()->info('Category deletion webhook received', $payload);
+        $this->processResourceEvent($payload, 'category');
     }
 
     private function handleInventoryEvent(array $payload): void
     {
-        $inventory = $this->extractResource($payload, [
-            ['inventory'],
-            ['payload'],
-        ]);
-
-        if ($inventory === null) {
-            $this->context->getLog()->warning('Webhook inventory event missing payload', $payload);
-
-            return;
-        }
-
-        $inventory = $this->enrichResourceWithContext($inventory, $payload, ['businessId', 'storeId']);
-        if (!isset($inventory['businessId']) && isset($payload['businessId'])) {
-            $inventory['businessId'] = $payload['businessId'];
-        }
-
-        $service = $this->getServiceFactory()->inventory($inventory['businessId'] ?? null);
-        $service->upsert($inventory);
+        $this->processResourceEvent($payload, 'inventory');
     }
 
     private function handleOrderEvent(array $payload): void
     {
-        $order = $this->extractResource($payload, [
-            ['order'],
-        ]);
-
-        if ($order === null) {
-            $this->context->getLog()->warning('Webhook order event missing payload', $payload);
-
-            return;
-        }
-
-        $order = $this->enrichResourceWithContext($order, $payload, ['businessId', 'storeId']);
-
-        $service = $this->getServiceFactory()->order($order['businessId'] ?? null);
-        $service->upsert($order);
+        $this->processResourceEvent($payload, 'order');
     }
 
     private function handleOrderItemEvent(array $payload): void
@@ -412,123 +581,32 @@ class WebhooksController extends Controller
 
     private function handleProductEvent(array $payload): void
     {
-        $product = $this->extractResource($payload, [
-            ['product'],
-        ]);
-
-        $businessId = $payload['businessId'] ?? null;
-        $productId = $payload['resourceId'] ?? null;
-        $service = null;
-
-        if ($product === null) {
-            if ($productId === null) {
-                $productId = $payload['productId'] ?? $this->extractContextValue($payload, 'productId');
-            }
-
-            if (($businessId === null || $productId === null) && isset($payload['links']) && is_array($payload['links'])) {
-                foreach ($payload['links'] as $link) {
-                    if (!is_array($link) || empty($link['href'])) {
-                        continue;
-                    }
-
-                    $href = (string) $link['href'];
-                    if ($businessId === null && preg_match('#/businesses/([a-zA-Z0-9\-]+)/#', $href, $matches)) {
-                        $businessId = $matches[1];
-                    }
-                    if ($productId === null && preg_match('#/products/([a-zA-Z0-9\-]+)#', $href, $matches)) {
-                        $productId = $matches[1];
-                    }
-                }
-            }
-
-            $service = $this->getServiceFactory()->product($businessId);
-
-            if ($productId !== null) {
-                $product = $service->fetchById($productId, $businessId);
-            }
-
-            if ($product === null) {
-                $this->context->getLog()->warning('Webhook product event missing payload', $payload);
-
-                return;
-            }
-        }
-
-        if ($service === null) {
-            $service = $this->getServiceFactory()->product($product['businessId'] ?? $businessId);
-        }
-
-        $product = $this->enrichResourceWithContext($product, $payload, ['businessId']);
-        $service->upsert($product);
+        $this->processResourceEvent($payload, 'product');
     }
 
     private function handleProductDeletion(array $payload): void
     {
-        $this->context->getLog()->info('Product deletion webhook received', $payload);
+        $this->processResourceEvent($payload, 'product');
     }
 
     private function handleStoreEvent(array $payload): void
     {
-        $store = $this->extractResource($payload, [
-            ['store'],
-        ]);
-
-        if ($store === null) {
-            $this->context->getLog()->warning('Webhook store event missing payload', $payload);
-
-            return;
-        }
-
-        $store = $this->enrichResourceWithContext($store, $payload, ['businessId']);
-
-        $service = $this->getServiceFactory()->store($store['businessId'] ?? null);
-        $service->upsert($store);
+        $this->processResourceEvent($payload, 'store');
     }
 
     private function handleTaxEvent(array $payload): void
     {
-        $tax = $this->extractResource($payload, [
-            ['tax'],
-        ]);
-
-        if ($tax === null) {
-            $this->context->getLog()->warning('Webhook tax event missing payload', $payload);
-
-            return;
-        }
-
-        $tax = $this->enrichResourceWithContext($tax, $payload, ['businessId']);
-
-        $service = $this->getServiceFactory()->tax($tax['businessId'] ?? null);
-        $service->upsert($tax);
+        $this->processResourceEvent($payload, 'tax');
     }
 
     private function handleTaxDeletion(array $payload): void
     {
-        $this->context->getLog()->info('Tax deletion webhook received', $payload);
+        $this->processResourceEvent($payload, 'tax');
     }
 
     private function handleTransactionEvent(array $payload): void
     {
-        $transaction = $this->extractResource($payload, [
-            ['transaction'],
-        ]);
-
-        if ($transaction === null) {
-            $this->context->getLog()->warning('Webhook transaction event missing payload', $payload);
-
-            return;
-        }
-
-        $transaction = $this->enrichResourceWithContext($transaction, $payload, ['businessId']);
-
-        $receipt = $this->extractResource($payload, [
-            ['receipt'],
-            ['transaction', 'receipt'],
-        ]);
-
-        $service = $this->getServiceFactory()->transaction($transaction['businessId'] ?? null);
-        $service->upsert($transaction, $receipt);
+        $this->processResourceEvent($payload, 'transaction');
     }
 
     private function handleUserEvent(array $payload): void
