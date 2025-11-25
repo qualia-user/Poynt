@@ -14,8 +14,7 @@ CREATE TABLE business (
   metadata    JSONB        NOT NULL DEFAULT '{}',
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  active      BOOLEAN      NOT NULL DEFAULT FALSE,
-  initial_gathering BOOLEAN NOT NULL DEFAULT FALSE
+  active      BOOLEAN      NOT NULL DEFAULT FALSE
 );
 
 -- Source (GET): preko Business payload-a (stores[] unutar businessa):
@@ -72,7 +71,7 @@ CREATE INDEX idx_merchant_token_expires_at ON merchant_token(expires_at);
 -- Source (GET – Billing API): https://billing.poynt.net/apps/{appId}/subscriptions?businessId={businessId}
 --   Vraća aktivne pretplate za tvoj app; ova tablica je tvoja BI kopija.
 --   Docs: “REST API Integration – Get Subscriptions List”.
-DROP TABLE IF EXISTS subscription;
+DROP TABLE IF EXISTS subscription
 CREATE TABLE IF NOT EXISTS subscription (
     subscription_id VARCHAR(255) PRIMARY KEY,
     business_id VARCHAR(255) NOT NULL,
@@ -219,8 +218,6 @@ CREATE TABLE order_item (
   raw_payload      JSONB NOT NULL DEFAULT '{}',
   created_at_ext   TIMESTAMPTZ,
   updated_at_ext   TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (order_id, order_item_id)
 );
 CREATE INDEX idx_order_item_product ON order_item(product_id);
@@ -408,6 +405,7 @@ CREATE TABLE product_variant (
   PRIMARY KEY (product_id, variant_id)
 );
 
+
 -- =========================
 -- INVENTORY
 -- =========================
@@ -458,12 +456,15 @@ CREATE TABLE catalog (
   business_id     VARCHAR(255) NOT NULL,
   name            VARCHAR(255),
   device_id       VARCHAR(255),
+  metadata        JSONB NOT NULL DEFAULT '{}',
   raw_payload     JSONB NOT NULL DEFAULT '{}',
   created_at_ext  TIMESTAMPTZ,
   updated_at_ext  TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE catalog
+    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'
 
 -- (korisno kad ingestiraš /full varijantu)
 CREATE TABLE catalog_product (
@@ -474,6 +475,7 @@ CREATE TABLE catalog_product (
   PRIMARY KEY (catalog_id, product_id)
 );
 
+
 ALTER TABLE catalog_product
     ADD COLUMN IF NOT EXISTS created_at_ext TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS updated_at_ext TIMESTAMPTZ;
@@ -483,6 +485,9 @@ ALTER TABLE catalog_product
 
 ALTER TABLE catalog_product
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+
+
 
 CREATE TABLE IF NOT EXISTS catalog_product_tax (
     catalog_id VARCHAR(255) NOT NULL,
@@ -518,6 +523,34 @@ CREATE TABLE category (
   created_at_ext  TIMESTAMPTZ,
   updated_at_ext  TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS category_product (
+    catalog_id VARCHAR(255) NOT NULL,
+    category_id VARCHAR(255) NOT NULL,
+    product_id VARCHAR(255) NOT NULL,
+    business_id VARCHAR(255) NOT NULL,
+    position INTEGER,
+    payload JSONB NOT NULL DEFAULT '{}',
+    created_at_ext TIMESTAMPTZ,
+    updated_at_ext TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (catalog_id, category_id, product_id)
+);
+
+CREATE TABLE IF NOT EXISTS category_tax (
+    catalog_id VARCHAR(255) NOT NULL,
+    category_id VARCHAR(255) NOT NULL,
+    tax_id VARCHAR(255) NOT NULL,
+    business_id VARCHAR(255) NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    created_at_ext TIMESTAMPTZ,
+    updated_at_ext TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (catalog_id, category_id, tax_id)
+);
+
 
 -- =========================
 -- TAXES
@@ -656,7 +689,7 @@ SELECT * FROM terminal;
 
 -- TOKENS
 SELECT * FROM app_token;
-SELECT * FROM merchant_token;
+SELECT * FROM merchant_token; -- 3fb53611-061a-4464-8ca7-0b91ca7c98cf
 
 -- SUBSCRIPTIONS
 SELECT * FROM subscription;
@@ -685,6 +718,8 @@ SELECT * FROM business_user;
 -- PRODUCTS & VARIANTS
 SELECT * FROM product;
 SELECT * FROM product_variant;
+truncate product;
+truncate product_variant;
 
 -- INVENTORY
 SELECT * FROM inventory_summary;
@@ -697,6 +732,13 @@ SELECT * FROM catalog_product;
 SELECT * FROM category;
 SELECT * FROM catalog_available_discount;
 SELECT * FROM catalog_product_tax;
+
+select * from catalog_product where catalog_id = '953a010f-3226-4492-ac2c-0f80704290fd';
+
+
+select * from product where product_id in ('4c8414dd-4449-478f-b54d-7938e284a0a3','09ceea73-8eb9-403b-b0d0-a31c899344b1')
+
+  select * from product;
 
 -- TAXES
 SELECT * FROM tax;
@@ -719,3 +761,45 @@ SELECT * FROM log WHERE message ilike '%fetchByBusinessId response%' ORDER BY id
 
 -- https://poynt.secureserver.net/applications/authorize?client_id=urn:aid:2f3dad35-7121-4666-9b95-77aad5a36c50&redirect_uri=https%3A%2F%2F9cfbce9dcf9e.ngrok-free.app%2Fcallback
 
+SELECT * FROM business WHERE business_id = '3fb53611-061a-4464-8ca7-0b91ca7c98cf' AND active = TRUE ORDER BY updated_at DESC LIMIT 1
+
+select * from store;
+
+
+select * from webhook_audit order by id desc;
+
+select * from hook order by id desc;
+
+
+
+-- truncate catalog;
+-- truncate catalog_product;
+-- truncate catalog_available_discount;
+-- truncate catalog_product_tax;
+-- truncate category;
+-- truncate category_product;
+-- truncate category_tax;
+
+
+select * from catalog;
+select * from catalog_product;
+-- select * from catalog_product where catalog_id = 'f2f987b3-96ee-4b98-9dd6-99d8f2f3833a';
+
+select * from catalog_available_discount;
+select * from catalog_product_tax;
+select * from category;
+select * from category_product;
+select * from category_tax;
+
+
+select * from log order by id desc;
+
+
+
+
+
+ALTER TABLE business
+    ADD COLUMN IF NOT EXISTS initial_gathering BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE business
+SET initial_gathering = COALESCE(initial_gathering, FALSE);
