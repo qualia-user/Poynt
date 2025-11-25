@@ -27,3 +27,4 @@
 - When adding a new OAuth platform, follow the naming convention `App\Modules\OAuth\<Platform>OAuthHandler` so the registry can resolve it automatically.
 - Be mindful of pagination helpers when dealing with list endpoints; prefer `PaginatedRequest::collect` to roll your own loops.
 - Ensure database writes use prepared statements/parameter binding through Doctrine's connection, mirroring patterns in existing services.
+- SQL directory is used for SQL client, there should be only initial SQL definitions(not alter definitions, only last definition version). 'database' directory can contain all migrations we had during development. Migrations shouldn't be script, but plain SQL definition. 

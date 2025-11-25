@@ -32,14 +32,23 @@ final class PaginatedRequest
             $items = $initialData[$entityKey];
         }
 
-        $totalCount = self::extractCount($initialData);
-        if ($totalCount === null || $totalCount <= count($items)) {
-            return $initialData;
-        }
-
         $origin = self::buildOrigin($initialUrl);
         $visited = [];
         $nextUrl = self::extractNextUrl($initialData, $origin);
+
+        $totalCount = self::extractCount($initialData);
+        $shouldPaginate = $nextUrl !== null;
+        if ($totalCount !== null && $totalCount > count($items)) {
+            $shouldPaginate = true;
+        }
+
+        if ($shouldPaginate === false) {
+            if ($totalCount !== null) {
+                $initialData['count'] = $totalCount;
+            }
+
+            return $initialData;
+        }
 
         while ($nextUrl !== null) {
             if (isset($visited[$nextUrl])) {
