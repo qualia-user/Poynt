@@ -102,20 +102,20 @@ class ServiceFactory
     public function onboardingResources(string $businessId): array
     {
         return [
-//            $this->business($businessId),
-//            $this->store($businessId),
-//            $this->businessUser($businessId),
-//            $this->subscription($businessId),
-//            $this->catalog($businessId),
-//            $this->category($businessId),
-//            $this->customer($businessId),
-//            $this->inventory($businessId),
-//            $this->paylink($businessId),
+            $this->business($businessId),
+            $this->store($businessId),
+            $this->businessUser($businessId),
+            $this->subscription($businessId),
+            $this->catalog($businessId),
+            $this->category($businessId),
+            $this->customer($businessId),
+            $this->inventory($businessId),
+            $this->paylink($businessId),
             $this->product($businessId),
-//            $this->tax($businessId),
-//            $this->hook($businessId),
-//            $this->order($businessId),
-//            $this->transaction($businessId),
+            $this->tax($businessId),
+            $this->hook($businessId),
+            $this->order($businessId),
+            $this->transaction($businessId),
         ];
     }
 }
