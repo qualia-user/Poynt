@@ -99,6 +99,10 @@ class CatalogService
             if ($categories !== null) {
                 $this->syncCatalogCategories($catalogId, $businessId, $categories);
             }
+            $taxes = $this->resolveCatalogTaxes($catalogData);
+            if ($taxes !== null) {
+                $this->syncCatalogProductTaxes($catalogId, $businessId, $taxes);
+            }
             return true;
         } catch (\Throwable $e) {
             $this->context->getLog()->error(
@@ -283,6 +287,22 @@ class CatalogService
         return null;
     }
 
+    private function resolveCatalogTaxes(array $catalogData): ?array
+    {
+        if (isset($catalogData['taxes']) && is_array($catalogData['taxes'])) {
+            return $catalogData['taxes'];
+        }
+
+        if (isset($catalogData['catalog']) && is_array($catalogData['catalog'])) {
+            $innerCatalog = $catalogData['catalog'];
+            if (isset($innerCatalog['taxes']) && is_array($innerCatalog['taxes'])) {
+                return $innerCatalog['taxes'];
+            }
+        }
+
+        return null;
+    }
+
     private function syncCatalogProducts(string $catalogId, array $products): void
     {
         $seenProductIds = [];
@@ -367,8 +387,6 @@ class CatalogService
 
             if (!empty($taxes)) {
                 $this->syncCatalogProductTaxes($catalogId, $productId, $taxes);
-            } else {
-                $this->purgeCatalogProductTaxes($catalogId, $productId);
             }
         }
 
@@ -453,7 +471,7 @@ class CatalogService
             }
         }
 
-        $this->purgeCatalogProductTaxes($catalogId, $productId, array_values(array_unique($seenTaxIds)));
+//        $this->purgeCatalogProductTaxes($catalogId, $productId, array_values(array_unique($seenTaxIds)));
     }
 
     private function purgeCatalogProductTaxes(string $catalogId, string $productId, array $keepTaxIds = []): void
@@ -578,6 +596,7 @@ class CatalogService
 
         $this->purgeMissingCategoryRelations($catalogId, array_values(array_unique($seenCategoryIds)));
     }
+
 
     private function resolveCategoryProducts(array $category): array
     {
