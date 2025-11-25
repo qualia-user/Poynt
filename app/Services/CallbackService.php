@@ -6,6 +6,7 @@ use App\Core\Context;
 use App\Core\Response;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\OAuthHandlerInterface;
+use App\Services\BusinessService;
 use RuntimeException;
 use Throwable;
 
@@ -194,6 +195,8 @@ class CallbackService
                 ]
             );
 
+            $this->upsertBusinessRecord($businessId);
+
             if (!$this->synchronizeStoresAndSubscriptions(
                 $businessId,
                 $appAccessToken,
@@ -254,6 +257,29 @@ class CallbackService
 
             return false;
         }
+    }
+
+    private function upsertBusinessRecord(string $businessId): void
+    {
+        /** @var BusinessService $businessService */
+        $businessService = $this->serviceFactory->business($businessId);
+
+        $payload = $businessService->fetchBusiness($businessId);
+        if (!is_array($payload)) {
+            throw new RuntimeException(
+                sprintf('Unable to fetch business payload for %s.', $businessId)
+            );
+        }
+
+        if (!$businessService->upsert($payload)) {
+            throw new RuntimeException(
+                sprintf('Failed to upsert business %s.', $businessId)
+            );
+        }
+
+        $this->context->getLog()->info(
+            sprintf('CallbackService::runBusinessWorkflow upserted business %s.', $businessId)
+        );
     }
 
     private function logWorkflowFailureRootCause(?string $businessId, Throwable $exception): void
@@ -763,48 +789,82 @@ class CallbackService
 
     private function gatherInitialResources(string $businessId): bool
     {
+        $this->setInitialGatheringStatus($businessId, true);
+
         $this->context->getLog()->info(
             sprintf('CallbackService::gatherInitialResources starting for business %s.', $businessId)
         );
 
-        $allSuccessful = true;
-        foreach ($this->serviceFactory->onboardingResources($businessId) as $service) {
-            $serviceClass = get_class($service);
+        try {
+            $allSuccessful = true;
+            foreach ($this->serviceFactory->onboardingResources($businessId) as $service) {
+                $serviceClass = get_class($service);
+
+                $this->context->getLog()->info(
+                    sprintf('CallbackService::gatherInitialResources syncing %s for business %s.', $serviceClass, $businessId)
+                );
+
+                $result = $this->syncResourceCollection($businessId, $service, $serviceClass);
+                if (!$result) {
+                    $allSuccessful = false;
+                    $this->context->getLog()->warning(
+                        sprintf(
+                            'CallbackService::gatherInitialResources encountered issues while syncing %s for business %s.',
+                            $serviceClass,
+                            $businessId
+                        )
+                    );
+                } else {
+                    $this->context->getLog()->info(
+                        sprintf(
+                            'CallbackService::gatherInitialResources completed %s for business %s successfully.',
+                            $serviceClass,
+                            $businessId
+                        )
+                    );
+                }
+            }
 
             $this->context->getLog()->info(
-                sprintf('CallbackService::gatherInitialResources syncing %s for business %s.', $serviceClass, $businessId)
+                sprintf(
+                    'CallbackService::gatherInitialResources finished for business %s with status: %s.',
+                    $businessId,
+                    $allSuccessful ? 'success' : 'partial-failure'
+                )
             );
 
-            $result = $this->syncResourceCollection($businessId, $service, $serviceClass);
-            if (!$result) {
-                $allSuccessful = false;
+            return $allSuccessful;
+        } finally {
+            $this->setInitialGatheringStatus($businessId, false);
+        }
+    }
+
+    private function setInitialGatheringStatus(string $businessId, bool $status): void
+    {
+        try {
+            $updated = $this->context->getConn()->executeStatement(
+                'UPDATE business SET initial_gathering = ?, updated_at = NOW() WHERE business_id = ?',
+                [$status, $businessId]
+            );
+
+            if ($updated === 0) {
                 $this->context->getLog()->warning(
                     sprintf(
-                        'CallbackService::gatherInitialResources encountered issues while syncing %s for business %s.',
-                        $serviceClass,
-                        $businessId
-                    )
-                );
-            } else {
-                $this->context->getLog()->info(
-                    sprintf(
-                        'CallbackService::gatherInitialResources completed %s for business %s successfully.',
-                        $serviceClass,
+                        'CallbackService::setInitialGatheringStatus could not find business %s to update.',
                         $businessId
                     )
                 );
             }
+        } catch (Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::setInitialGatheringStatus failed for business %s: %s',
+                    $businessId,
+                    $e->getMessage()
+                ),
+                ['exception' => $e]
+            );
         }
-
-        $this->context->getLog()->info(
-            sprintf(
-                'CallbackService::gatherInitialResources finished for business %s with status: %s.',
-                $businessId,
-                $allSuccessful ? 'success' : 'partial-failure'
-            )
-        );
-
-        return $allSuccessful;
     }
 
     /**
