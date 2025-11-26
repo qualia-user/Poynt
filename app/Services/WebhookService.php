@@ -398,6 +398,7 @@ class WebhookService
         }
 
         $targetDeliveryUrl = $deliveryUrl;
+        $normalizedTargetEvents = $this->normalizeEventTypes($eventTypes);
         $oldHook = null;
 
         foreach ($existingHooks as $hook) {
@@ -407,6 +408,17 @@ class WebhookService
 
             $hookUrl = $hook['deliveryUrl'] ?? $hook['destinationUrl'] ?? $hook['url'] ?? null;
             $status = $hook['status'] ?? null;
+
+            $hookEvents = [];
+            if (isset($hook['eventTypes'])) {
+                $hookEvents = is_array($hook['eventTypes']) ? $hook['eventTypes'] : [$hook['eventTypes']];
+            }
+
+            $normalizedHookEvents = $this->normalizeEventTypes($hookEvents);
+
+            if ($hookUrl === $targetDeliveryUrl && $normalizedHookEvents === $normalizedTargetEvents && $this->isHookActive($hook, $status)) {
+                return $hook;
+            }
 
             if ($hookUrl === $targetDeliveryUrl && $status === 'ACTIVE') {
                 return $hook;
@@ -777,7 +789,7 @@ class WebhookService
     }
 
     /**
-     * Remove duplicate hooks by delivery URL, deleting redundant entries via the Poynt API.
+     * Remove duplicate hooks by delivery URL and event types, deleting redundant entries via the Poynt API.
      *
      * @param array<int, mixed> $hooks
      * @return array<int, mixed>
@@ -785,7 +797,7 @@ class WebhookService
     private function deleteDuplicateHooks(array $hooks, string $businessId, string $merchantToken): array
     {
         $uniqueHooks = [];
-        $seenDeliveryUrls = [];
+        $seenHookKeys = [];
 
         foreach ($hooks as $hook) {
             if (!is_array($hook)) {
@@ -795,14 +807,22 @@ class WebhookService
 
             $hookId = $hook['id'] ?? $hook['hookId'] ?? null;
             $deliveryUrl = $hook['deliveryUrl'] ?? $hook['destinationUrl'] ?? $hook['url'] ?? null;
+            $eventTypes = $hook['eventTypes'] ?? [];
+
+            if (!is_array($eventTypes)) {
+                $eventTypes = [$eventTypes];
+            }
 
             if (!is_string($hookId) || $hookId === '' || !is_string($deliveryUrl) || $deliveryUrl === '') {
                 $uniqueHooks[] = $hook;
                 continue;
             }
 
-            if (!isset($seenDeliveryUrls[$deliveryUrl])) {
-                $seenDeliveryUrls[$deliveryUrl] = true;
+            $normalizedEventTypes = $this->normalizeEventTypes($eventTypes);
+            $hookKey = $deliveryUrl . '|' . implode('|', $normalizedEventTypes);
+
+            if (!isset($seenHookKeys[$hookKey])) {
+                $seenHookKeys[$hookKey] = true;
                 $uniqueHooks[] = $hook;
                 continue;
             }
@@ -810,11 +830,6 @@ class WebhookService
             $hookBusinessId = $hook['businessId'] ?? $businessId;
             if (!is_string($hookBusinessId) || $hookBusinessId === '') {
                 $hookBusinessId = $businessId;
-            }
-
-            $eventTypes = $hook['eventTypes'] ?? [];
-            if (!is_array($eventTypes)) {
-                $eventTypes = [$eventTypes];
             }
 
             if ($this->eventsRequireOrgId($eventTypes)) {
@@ -858,6 +873,42 @@ class WebhookService
         }
 
         return $uniqueHooks;
+    }
+
+    /**
+     * Determine whether a webhook entry is active.
+     *
+     * @param array $hook
+     * @param string|null $status
+     * @return bool
+     */
+    private function isHookActive(array $hook, ?string $status = null): bool
+    {
+        $statusValue = $status ?? ($hook['status'] ?? null);
+        if (is_string($statusValue) && strtoupper($statusValue) === 'ACTIVE') {
+            return true;
+        }
+
+        $activeFlag = $hook['active'] ?? null;
+
+        return $activeFlag === true || $activeFlag === 1 || $activeFlag === 'true';
+    }
+
+    /**
+     * Normalize event types for comparison regardless of ordering or duplicates.
+     *
+     * @param array<int, string> $eventTypes
+     * @return array<int, string>
+     */
+    private function normalizeEventTypes(array $eventTypes): array
+    {
+        $normalized = array_filter(array_map(static function ($event) {
+            return is_string($event) ? $event : null;
+        }, $eventTypes));
+
+        sort($normalized);
+
+        return array_values(array_unique($normalized));
     }
 
     /**
