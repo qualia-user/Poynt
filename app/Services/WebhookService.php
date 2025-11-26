@@ -591,6 +591,14 @@ class WebhookService
             return false;
         }
 
+        if (!is_string($merchantToken) || $merchantToken === '') {
+            $this->context->getLog()->error(
+                sprintf('WebhookService::fetchByBusinessId: missing merchant access token for business %s', $businessId)
+            );
+
+            return false;
+        }
+
         try {
             $hooks = $this->fetchAllHooks($businessId, $appToken);
             if ($hooks === false) {
@@ -603,53 +611,7 @@ class WebhookService
                 return false;
             }
 
-            $deliveries = $this->fetchDeliveriesForBusiness($businessId, $merchantToken);
-
-            $orgBusinessId = ConfigApp::$orgId ?? '';
-            if (
-                is_string($orgBusinessId)
-                && $orgBusinessId !== ''
-                && $orgBusinessId !== $businessId
-            ) {
-                $orgDeliveries = $this->fetchDeliveriesForBusiness($orgBusinessId, $merchantToken);
-                if ($orgDeliveries !== []) {
-                    $deliveries = array_merge($deliveries, $orgDeliveries);
-                }
-            }
-            $deliveriesByHook = [];
-            $deliveriesMissingHookId = [];
-            foreach ($deliveries as $delivery) {
-                if (!is_array($delivery)) {
-                    continue;
-                }
-
-                $deliveryHookId = $delivery['hookId'] ?? null;
-                if ((!is_string($deliveryHookId) || $deliveryHookId === '') && isset($delivery['hook']) && is_array($delivery['hook'])) {
-                    $candidate = $delivery['hook']['id'] ?? $delivery['hook']['hookId'] ?? null;
-                    if (!is_string($candidate) || $candidate === '') {
-                        $candidate = $delivery['hook']['hook']['id'] ?? $delivery['hook']['hook']['hookId'] ?? null;
-                    }
-
-                    if (is_string($candidate) && $candidate !== '') {
-                        $deliveryHookId = $candidate;
-                    }
-                }
-
-                if (!is_string($deliveryHookId) || $deliveryHookId === '') {
-                    $deliveriesMissingHookId[] = $delivery;
-                    continue;
-                }
-
-                if (!isset($deliveriesByHook[$deliveryHookId])) {
-                    $deliveriesByHook[$deliveryHookId] = [];
-                }
-
-                if (!isset($delivery['hookId'])) {
-                    $delivery['hookId'] = $deliveryHookId;
-                }
-
-                $deliveriesByHook[$deliveryHookId][] = $delivery;
-            }
+            $hooks = $this->deleteDuplicateHooks($hooks, $businessId, $merchantToken);
 
             $hooksById = [];
             foreach ($hooks as $hook) {
@@ -662,7 +624,6 @@ class WebhookService
                     continue;
                 }
 
-                $hook['deliveries'] = [];
                 $hooksById[$hookId] = $hook;
             }
 
@@ -675,43 +636,7 @@ class WebhookService
                 ]
             );
 
-            $deliveriesByHookKeys = array_keys($deliveriesByHook);
-            $this->context->getLog()->info(
-                'WebhookService::fetchByBusinessId deliveries grouped by hookId',
-                [
-                    'businessId' => $businessId,
-                    'hookIds' => $deliveriesByHookKeys,
-                ]
-            );
-
-            $unknownHookIds = array_values(array_diff($deliveriesByHookKeys, $hookIds));
-            $this->context->getLog()->info(
-                'WebhookService::fetchByBusinessId deliveries referencing unknown hookIds',
-                [
-                    'businessId' => $businessId,
-                    'hookIds' => $unknownHookIds,
-                ]
-            );
-
-            foreach ($deliveriesByHook as $hookId => $hookDeliveries) {
-                if (isset($hooksById[$hookId])) {
-                    $hooksById[$hookId]['deliveries'] = $hookDeliveries;
-                }
-            }
-
             $hooks = array_values($hooksById);
-
-            if (!empty($deliveriesMissingHookId)) {
-                FetchResponseLogger::info(
-                    $this->context->getLog(),
-                    'WebhookService::fetchByBusinessId deliveries missing hookId',
-                    [
-                        'businessId' => $businessId,
-                        'entity' => 'deliveries',
-                        'payload' => $deliveriesMissingHookId,
-                    ]
-                );
-            }
 
             FetchResponseLogger::info(
                 $this->context->getLog(),
@@ -849,6 +774,99 @@ class WebhookService
         }
 
         return $allDeleted;
+    }
+
+    /**
+     * Remove duplicate hooks by delivery URL, deleting redundant entries via the Poynt API.
+     *
+     * @param array<int, mixed> $hooks
+     * @return array<int, mixed>
+     */
+    private function deleteDuplicateHooks(array $hooks, string $businessId, string $merchantToken): array
+    {
+        $uniqueHooks = [];
+        $seenHookKeys = [];
+
+        foreach ($hooks as $hook) {
+            if (!is_array($hook)) {
+                $uniqueHooks[] = $hook;
+                continue;
+            }
+
+            $hookId = $hook['id'] ?? $hook['hookId'] ?? null;
+            $deliveryUrl = $hook['deliveryUrl'] ?? $hook['destinationUrl'] ?? $hook['url'] ?? null;
+            $hookBusinessId = $hook['businessId'] ?? $businessId;
+
+            if (!is_string($hookId) || $hookId === '' || !is_string($deliveryUrl) || $deliveryUrl === '') {
+                $uniqueHooks[] = $hook;
+                continue;
+            }
+
+            if (!is_string($hookBusinessId) || $hookBusinessId === '') {
+                $hookBusinessId = $businessId;
+            }
+
+            $eventTypes = $hook['eventTypes'] ?? [];
+            if (!is_array($eventTypes)) {
+                $eventTypes = [$eventTypes];
+            }
+
+            if ($this->eventsRequireOrgId($eventTypes)) {
+                $orgId = ConfigApp::$orgId ?? '';
+                if (is_string($orgId) && $orgId !== '') {
+                    $hookBusinessId = $orgId;
+                }
+            }
+
+            $normalizedEvents = array_values(array_filter(array_map(
+                static fn($event) => is_string($event) ? $event : null,
+                $eventTypes
+            )));
+            sort($normalizedEvents);
+
+            $compositeKey = sprintf('%s|%s|%s', $hookBusinessId, $deliveryUrl, implode(',', $normalizedEvents));
+
+            if (!isset($seenHookKeys[$compositeKey])) {
+                $seenHookKeys[$compositeKey] = true;
+                $uniqueHooks[] = $hook;
+                continue;
+            }
+
+            try {
+                $this->httpClient->delete(
+                    self::POYNT_WEBHOOK_URL . '/' . rawurlencode($hookId),
+                    [
+                        'headers' => [
+                            'Authorization' => 'Bearer ' . $merchantToken,
+                        ],
+                        'query' => [
+                            'businessId' => $hookBusinessId,
+                        ],
+                    ]
+                );
+
+                $this->context->getLog()->info(
+                    'WebhookService::fetchByBusinessId: deleted duplicate hook',
+                    [
+                        'hookId' => $hookId,
+                        'businessId' => $hookBusinessId,
+                        'deliveryUrl' => $deliveryUrl,
+                        'eventTypes' => $normalizedEvents,
+                    ]
+                );
+            } catch (BadResponseException|GuzzleException $e) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'WebhookService::fetchByBusinessId: failed deleting duplicate hook %s for business %s: %s',
+                        $hookId,
+                        $hookBusinessId,
+                        $e->getMessage()
+                    )
+                );
+            }
+        }
+
+        return $uniqueHooks;
     }
 
     /**
