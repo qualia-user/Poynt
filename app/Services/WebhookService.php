@@ -351,7 +351,10 @@ class WebhookService
     public function callRegisterWebhook(string $merchantToken, array $events): void
     {
         try {
-            $responseData = $this->registerWebhook($merchantToken, $events);
+            $responseData = $this->ensureWebhookExists(
+                ConfigApp::$webRootUrl . '/webhooks/event-listener',
+                $events
+            );
 
             if ($responseData) {
                 $this->context->getLog()->info('Successfully registered webhooks: ' . implode(', ', $events), $responseData);
@@ -368,6 +371,115 @@ class WebhookService
             // TODO send status HTTP response and exit()
             // throw $e;
         }
+    }
+
+    /**
+     * Ensure that a webhook exists for the current business.
+     *
+     * If an active webhook already exists for the configured delivery URL, it is returned.
+     * Otherwise, a new webhook is registered and any previous hook is removed.
+     *
+     * @param string $deliveryUrl
+     * @param array $eventTypes
+     * @return mixed|null
+     */
+    public function ensureWebhookExists(string $deliveryUrl, array $eventTypes): mixed
+    {
+        $businessId = $this->businessId;
+        if ($businessId === null) {
+            $this->context->getLog()->error('WebhookService::ensureWebhookExists: missing businessId');
+
+            return null;
+        }
+
+        $existingHooks = $this->fetchByBusinessId($businessId);
+        if ($existingHooks === false) {
+            return null;
+        }
+
+        $targetDeliveryUrl = $deliveryUrl;
+        $oldHook = null;
+
+        foreach ($existingHooks as $hook) {
+            if (!is_array($hook)) {
+                continue;
+            }
+
+            $hookUrl = $hook['deliveryUrl'] ?? $hook['destinationUrl'] ?? $hook['url'] ?? null;
+            $status = $hook['status'] ?? null;
+
+            if ($hookUrl === $targetDeliveryUrl && $status === 'ACTIVE') {
+                return $hook;
+            }
+
+            if ($oldHook === null) {
+                $oldHook = $hook;
+            }
+        }
+
+        $tokenService = new TokenService($this->context);
+        $merchantAccessToken = $tokenService->getMerchantToken($businessId);
+
+        if (!is_string($merchantAccessToken) || $merchantAccessToken === '') {
+            $this->context->getLog()->error(
+                sprintf('WebhookService::ensureWebhookExists: missing merchant token for business %s', $businessId)
+            );
+
+            return null;
+        }
+
+        $newHook = $this->registerWebhook($merchantAccessToken, $eventTypes);
+
+        if ($newHook && is_array($oldHook)) {
+            $hookId = $oldHook['id'] ?? $oldHook['hookId'] ?? null;
+            if (is_string($hookId) && $hookId !== '') {
+                $hookBusinessId = $oldHook['businessId'] ?? $businessId;
+                $oldEventTypes = $oldHook['eventTypes'] ?? [];
+                if (!is_array($oldEventTypes)) {
+                    $oldEventTypes = [$oldEventTypes];
+                }
+
+                if ($this->eventsRequireOrgId($oldEventTypes)) {
+                    $orgId = ConfigApp::$orgId ?? '';
+                    if (is_string($orgId) && $orgId !== '') {
+                        $hookBusinessId = $orgId;
+                    }
+                }
+
+                try {
+                    $this->httpClient->delete(
+                        self::POYNT_WEBHOOK_URL . '/' . rawurlencode($hookId),
+                        [
+                            'headers' => [
+                                'Authorization' => 'Bearer ' . $merchantAccessToken,
+                            ],
+                            'query' => [
+                                'businessId' => $hookBusinessId,
+                            ],
+                        ]
+                    );
+
+                    $this->context->getLog()->info(
+                        sprintf(
+                            'WebhookService::ensureWebhookExists: deleted old hook %s for business %s',
+                            $hookId,
+                            $hookBusinessId
+                        )
+                    );
+                } catch (BadResponseException|GuzzleException $e) {
+                    $this->context->getLog()->error(
+                        sprintf(
+                            'WebhookService::ensureWebhookExists: failed deleting old hook %s for business %s: %s',
+                            $hookId,
+                            $hookBusinessId,
+                            $e->getMessage()
+                        )
+                    );
+                }
+            }
+        }
+
+        return $newHook;
     }
 
     /**
