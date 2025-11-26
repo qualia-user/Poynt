@@ -195,7 +195,7 @@ class CallbackService
                 ]
             );
 
-            $this->upsertBusinessRecord($businessId);
+//            $this->upsertBusinessRecord($businessId);
 
             if (!$this->synchronizeStoresAndSubscriptions(
                 $businessId,
