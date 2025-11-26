@@ -81,6 +81,20 @@ class WebhookService
                 'error_message' => null,
             ]);
 
+            if (is_array($responseData)) {
+                $responseData['businessId'] = $responseData['businessId'] ?? $businessId;
+
+                if (!isset($responseData['eventTypes']) && isset($payload['eventTypes'])) {
+                    $responseData['eventTypes'] = $payload['eventTypes'];
+                }
+
+                if (!isset($responseData['deliveryUrl']) && isset($payload['deliveryUrl'])) {
+                    $responseData['deliveryUrl'] = $payload['deliveryUrl'];
+                }
+
+                $this->upsert($responseData);
+            }
+
             $this->context->getLog()->info("Webhook registered successfully", $responseData);
             return $responseData;
 
