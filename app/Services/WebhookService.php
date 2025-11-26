@@ -430,16 +430,14 @@ class WebhookService
 
             $normalizedHookEvents = $this->normalizeEventTypes($hookEvents);
 
-            if ($hookUrl === $targetDeliveryUrl && $normalizedHookEvents === $normalizedTargetEvents && $this->isHookActive($hook, $status)) {
-                return $hook;
-            }
+            if ($hookUrl === $targetDeliveryUrl && $normalizedHookEvents === $normalizedTargetEvents) {
+                if ($this->isHookActive($hook, $status)) {
+                    return $hook;
+                }
 
-            if ($hookUrl === $targetDeliveryUrl && $status === 'ACTIVE') {
-                return $hook;
-            }
-
-            if ($oldHook === null) {
-                $oldHook = $hook;
+                if ($oldHook === null) {
+                    $oldHook = $hook;
+                }
             }
         }
 
