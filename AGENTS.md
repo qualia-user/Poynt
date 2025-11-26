@@ -27,4 +27,9 @@
 - When adding a new OAuth platform, follow the naming convention `App\Modules\OAuth\<Platform>OAuthHandler` so the registry can resolve it automatically.
 - Be mindful of pagination helpers when dealing with list endpoints; prefer `PaginatedRequest::collect` to roll your own loops.
 - Ensure database writes use prepared statements/parameter binding through Doctrine's connection, mirroring patterns in existing services.
-- SQL directory is used for SQL client, there should be only initial SQL definitions(not alter definitions, only last definition version). 'database' directory can contain all migrations we had during development. Migrations shouldn't be script, but plain SQL definition. 
+- SQL directory is used for SQL client, there should be only initial SQL definitions(not alter definitions, only last definition version). 'database' directory can contain all migrations we had during development. Migrations shouldn't be script, but plain SQL definition.
+
+## Hooks reference
+- Fetch hooks for application subscriptions via `https://services.poynt.net/hooks?businessId={ORGANIZATION_ID}`.
+- Fetch all other hooks via `https://services.poynt.net/hooks?businessId={BUSINESS_ID}`.
+- Tokens can be at the app or merchant level; either works for these requests.
