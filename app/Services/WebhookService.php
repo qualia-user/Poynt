@@ -434,10 +434,6 @@ class WebhookService
                 return $hook;
             }
 
-            if ($hookUrl === $targetDeliveryUrl && $status === true) {
-                return $hook;
-            }
-
             if ($oldHook === null) {
                 $oldHook = $hook;
             }
