@@ -443,7 +443,7 @@ class WebhookService
                 return $hook;
             }
 
-            if ($oldHook === null) {
+            if ($hookUrl === $targetDeliveryUrl && ($oldHook === null || $this->isHookActive($hook, $status))) {
                 $oldHook = $hook;
             }
         }
