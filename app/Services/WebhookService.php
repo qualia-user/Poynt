@@ -48,9 +48,11 @@ class WebhookService
      */
     public function registerWebhook(string $merchantAccessToken, array $events): mixed
     {
-        $businessId = $this->businessId;
-        if ($this->eventsRequireOrgId($events)) {
-            $businessId = ConfigApp::$orgId;
+        $businessId = $this->resolveBusinessIdForEvents($events);
+        if ($businessId === null) {
+            $this->context->getLog()->error('WebhookService::registerWebhook: unable to resolve businessId for payload');
+
+            return null;
         }
 
         // Build the payload
@@ -399,14 +401,21 @@ class WebhookService
      */
     public function ensureWebhookExists(string $deliveryUrl, array $eventTypes): mixed
     {
-        $businessId = $this->businessId;
-        if ($businessId === null) {
+        $targetBusinessId = $this->resolveBusinessIdForEvents($eventTypes);
+        if ($targetBusinessId === null) {
             $this->context->getLog()->error('WebhookService::ensureWebhookExists: missing businessId');
 
             return null;
         }
 
-        $existingHooks = $this->fetchByBusinessId($businessId);
+        $tokenBusinessId = $this->businessId;
+        if (!is_string($tokenBusinessId) || $tokenBusinessId === '') {
+            $this->context->getLog()->error('WebhookService::ensureWebhookExists: missing merchant businessId for tokens');
+
+            return null;
+        }
+
+        $existingHooks = $this->fetchByBusinessId($tokenBusinessId);
         if ($existingHooks === false) {
             return null;
         }
@@ -440,11 +449,11 @@ class WebhookService
         }
 
         $tokenService = new TokenService($this->context);
-        $merchantAccessToken = $tokenService->getMerchantToken($businessId);
+        $merchantAccessToken = $tokenService->getMerchantToken($tokenBusinessId);
 
         if (!is_string($merchantAccessToken) || $merchantAccessToken === '') {
             $this->context->getLog()->error(
-                sprintf('WebhookService::ensureWebhookExists: missing merchant token for business %s', $businessId)
+                sprintf('WebhookService::ensureWebhookExists: missing merchant token for business %s', $tokenBusinessId)
             );
 
             return null;
@@ -455,7 +464,7 @@ class WebhookService
         if ($newHook && is_array($oldHook)) {
             $hookId = $oldHook['id'] ?? $oldHook['hookId'] ?? null;
             if (is_string($hookId) && $hookId !== '') {
-                $hookBusinessId = $oldHook['businessId'] ?? $businessId;
+                $hookBusinessId = $oldHook['businessId'] ?? $targetBusinessId;
                 $oldEventTypes = $oldHook['eventTypes'] ?? [];
                 if (!is_array($oldEventTypes)) {
                     $oldEventTypes = [$oldEventTypes];
@@ -1097,6 +1106,29 @@ class WebhookService
         }
 
         return false;
+    }
+
+    /**
+     * Select the correct business identifier for the given events.
+     *
+     * @param array<int, mixed> $events
+     */
+    private function resolveBusinessIdForEvents(array $events): ?string
+    {
+        $businessId = $this->businessId;
+
+        if ($this->eventsRequireOrgId($events)) {
+            $orgId = ConfigApp::$orgId ?? null;
+            if (is_string($orgId) && $orgId !== '') {
+                $businessId = $orgId;
+            }
+        }
+
+        if (!is_string($businessId) || $businessId === '') {
+            return null;
+        }
+
+        return $businessId;
     }
 
     private function normalizeHooks(mixed $payload): array|false
