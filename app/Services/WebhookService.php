@@ -421,7 +421,7 @@ class WebhookService
             }
 
             $hookUrl = $hook['deliveryUrl'] ?? $hook['destinationUrl'] ?? $hook['url'] ?? null;
-            $status = $hook['status'] ?? null;
+            $status = $hook['active'] ?? null;
 
             $hookEvents = [];
             if (isset($hook['eventTypes'])) {
@@ -434,7 +434,7 @@ class WebhookService
                 return $hook;
             }
 
-            if ($hookUrl === $targetDeliveryUrl && $status === 'ACTIVE') {
+            if ($hookUrl === $targetDeliveryUrl && $status === true) {
                 return $hook;
             }
 
@@ -526,13 +526,13 @@ class WebhookService
         $hookId = $hookData['id'];
         $businessId = $hookData['businessId'];
 
-        $url = $hookData['url'] ?? $hookData['destinationUrl'] ?? null;
+        $url = $hookData['deliveryUrl'] ?? null;
         $eventTypes = $hookData['eventTypes'] ?? $hookData['events'] ?? [];
         if (!is_array($eventTypes)) {
             $eventTypes = [$eventTypes];
         }
         $eventTypesLiteral = Format::postgresTextArray($eventTypes);
-        $status = $hookData['status'] ?? null;
+        $status = $hookData['active'] ?? null;
         $deliveries = $this->resolveDeliveries($hookData);
         if (!empty($deliveries)) {
             $hookData = $this->stripDeliveries($hookData);
