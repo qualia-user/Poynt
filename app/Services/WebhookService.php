@@ -420,31 +420,41 @@ class WebhookService
             return null;
         }
 
-        $targetDeliveryUrl = $deliveryUrl;
         $normalizedTargetEvents = $this->normalizeEventTypes($eventTypes);
-        $oldHook = null;
+        $existingHook = null;
 
         foreach ($existingHooks as $hook) {
             if (!is_array($hook)) {
                 continue;
             }
 
-            $hookUrl = $hook['deliveryUrl'] ?? $hook['destinationUrl'] ?? $hook['url'] ?? null;
-            $status = $hook['active'] ?? null;
-
-            $hookEvents = [];
-            if (isset($hook['eventTypes'])) {
-                $hookEvents = is_array($hook['eventTypes']) ? $hook['eventTypes'] : [$hook['eventTypes']];
+            $hookEvents = $hook['eventTypes'] ?? [];
+            if (!is_array($hookEvents)) {
+                $hookEvents = [$hookEvents];
             }
 
-            $normalizedHookEvents = $this->normalizeEventTypes($hookEvents);
+            if ($this->normalizeEventTypes($hookEvents) === $normalizedTargetEvents) {
+                $existingHook = $hook;
+                break;
+            }
+        }
 
-            if ($hookUrl === $targetDeliveryUrl && $normalizedHookEvents === $normalizedTargetEvents && $this->isHookActive($hook, $status)) {
-                return $hook;
+        $shouldRegister = $existingHook === null;
+        $shouldDeleteOldHook = false;
+
+        if ($existingHook !== null) {
+            if (!$this->isHookActive($existingHook)) {
+                $shouldRegister = true;
+            } else {
+                $hookUrl = $existingHook['deliveryUrl'] ?? $existingHook['destinationUrl'] ?? $existingHook['url'] ?? null;
+                if ($hookUrl !== $deliveryUrl) {
+                    $shouldRegister = true;
+                    $shouldDeleteOldHook = true;
+                }
             }
 
-            if ($hookUrl === $targetDeliveryUrl && ($oldHook === null || $this->isHookActive($hook, $status))) {
-                $oldHook = $hook;
+            if ($shouldRegister === false) {
+                return $existingHook;
             }
         }
 
@@ -459,18 +469,16 @@ class WebhookService
             return null;
         }
 
-        $newHook = $this->registerWebhook($merchantAccessToken, $eventTypes);
-
-        if ($newHook && is_array($oldHook)) {
-            $hookId = $oldHook['id'] ?? $oldHook['hookId'] ?? null;
+        if ($shouldDeleteOldHook && is_array($existingHook)) {
+            $hookId = $existingHook['id'] ?? $existingHook['hookId'] ?? null;
             if (is_string($hookId) && $hookId !== '') {
-                $hookBusinessId = $oldHook['businessId'] ?? $targetBusinessId;
-                $oldEventTypes = $oldHook['eventTypes'] ?? [];
-                if (!is_array($oldEventTypes)) {
-                    $oldEventTypes = [$oldEventTypes];
+                $hookBusinessId = $existingHook['businessId'] ?? $targetBusinessId;
+                $hookEventTypes = $existingHook['eventTypes'] ?? [];
+                if (!is_array($hookEventTypes)) {
+                    $hookEventTypes = [$hookEventTypes];
                 }
 
-                if ($this->eventsRequireOrgId($oldEventTypes)) {
+                if ($this->eventsRequireOrgId($hookEventTypes)) {
                     $orgId = ConfigApp::$orgId ?? '';
                     if (is_string($orgId) && $orgId !== '') {
                         $hookBusinessId = $orgId;
@@ -510,7 +518,7 @@ class WebhookService
             }
         }
 
-        return $newHook;
+        return $this->registerWebhook($merchantAccessToken, $eventTypes);
     }
 
     /**
