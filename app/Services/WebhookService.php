@@ -903,8 +903,8 @@ class WebhookService
      */
     private function isHookActive(array $hook, ?string $status = null): bool
     {
-        $statusValue = $status ?? ($hook['status'] ?? null);
-        if (is_string($statusValue) && strtoupper($statusValue) === 'ACTIVE') {
+        $statusValue = $status ?? ($hook['active'] ?? null);
+        if ($statusValue === true) {
             return true;
         }
 
