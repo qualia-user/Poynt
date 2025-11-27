@@ -44,3 +44,9 @@
 - Product ↔ Category (M:N)
 - (Optional) InventoryLevel: Product × Store
 - Price/Overrides can live on Product or on the Catalog–Product relationship (preferred on the relationship since the Catalog carries the price list).
+- SQL directory is used for SQL client, there should be only initial SQL definitions(not alter definitions, only last definition version). 'database' directory can contain all migrations we had during development. Migrations shouldn't be script, but plain SQL definition.
+
+## Hooks reference
+- Fetch hooks for application subscriptions via `https://services.poynt.net/hooks?businessId={ORGANIZATION_ID}`.
+- Fetch all other hooks via `https://services.poynt.net/hooks?businessId={BUSINESS_ID}`.
+- Tokens can be at the app or merchant level; either works for these requests.

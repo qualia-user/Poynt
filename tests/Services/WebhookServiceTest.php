@@ -160,7 +160,7 @@ namespace Tests\Services {
             $this->assertSame(['id' => 'hook-2'], $result);
         }
 
-        public function testFetchByBusinessIdFetchesOrgDeliveriesForSubscriptionHooks(): void
+        public function testFetchByBusinessIdDeletesDuplicateHooks(): void
         {
             ConfigApp::$orgId = 'org-456';
             ConfigApp::$appId = 'app-456';
@@ -188,25 +188,9 @@ namespace Tests\Services {
             $context->method('getConn')->willReturn($connection);
             $context->method('getLog')->willReturn($logger);
 
-            $hookPayload = [
-                'count' => 1,
-                'hooks' => [
-                    [
-                        'id' => 'hook-sub',
-                        'eventTypes' => ['APPLICATION_SUBSCRIPTION_END'],
-                        'deliveryUrl' => 'https://example.test/webhooks',
-                        'businessId' => 'business-123',
-                        'applicationId' => 'urn:aid:' . ConfigApp::$appId,
-                        'status' => 'ACTIVE',
-                        'createdAt' => '2024-01-01T00:00:00Z',
-                        'updatedAt' => '2024-01-01T00:00:00Z',
-                    ],
-                ],
-            ];
-
             $httpClient = $this->createMock(ClientInterface::class);
             $httpClient
-                ->expects($this->exactly(4))
+                ->expects($this->exactly(2))
                 ->method('get')
                 ->withConsecutive(
                     [
@@ -223,20 +207,36 @@ namespace Tests\Services {
                             'query' => ['businessId' => ConfigApp::$orgId],
                         ],
                     ],
-                    [
-                        'https://services.poynt.net/businesses/business-123/deliveries',
-                        ['headers' => ['Authorization' => 'Bearer merchant-token']],
-                    ],
-                    [
-                        'https://services.poynt.net/businesses/' . ConfigApp::$orgId . '/deliveries',
-                        ['headers' => ['Authorization' => 'Bearer merchant-token']],
-                    ]
                 )
                 ->willReturnOnConsecutiveCalls(
-                    new Response(200, [], json_encode(['hooks' => []])),
-                    new Response(200, [], json_encode($hookPayload)),
-                    new Response(200, [], json_encode(['deliveries' => []])),
-                    new Response(200, [], json_encode(['deliveries' => []]))
+                    new Response(200, [], json_encode([
+                        'hooks' => [
+                            [
+                                'id' => 'hook-primary',
+                                'eventTypes' => ['ORDER_COMPLETED'],
+                                'deliveryUrl' => 'https://example.test/webhooks',
+                                'businessId' => 'business-123',
+                            ],
+                            [
+                                'id' => 'hook-duplicate',
+                                'eventTypes' => ['ORDER_COMPLETED'],
+                                'deliveryUrl' => 'https://example.test/webhooks',
+                                'businessId' => 'business-123',
+                            ],
+                        ],
+                    ])),
+                    new Response(200, [], json_encode(['hooks' => []]))
+                );
+
+            $httpClient
+                ->expects($this->once())
+                ->method('delete')
+                ->with(
+                    WebhookService::POYNT_WEBHOOK_URL . '/hook-duplicate',
+                    [
+                        'headers' => ['Authorization' => 'Bearer merchant-token'],
+                        'query' => ['businessId' => 'business-123'],
+                    ]
                 );
 
             $service = new WebhookService($context, 'business-123', $httpClient);
@@ -245,8 +245,8 @@ namespace Tests\Services {
 
             $this->assertIsArray($result);
             $this->assertCount(1, $result);
-            $this->assertSame('hook-sub', $result[0]['id']);
-            $this->assertSame(ConfigApp::$orgId, $result[0]['businessId']);
+            $this->assertSame('hook-primary', $result[0]['id']);
+            $this->assertSame('business-123', $result[0]['businessId']);
         }
 
         public function testDeleteAllByBusinessIdUsesHookSpecificBusinessIds(): void

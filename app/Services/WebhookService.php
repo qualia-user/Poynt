@@ -48,9 +48,11 @@ class WebhookService
      */
     public function registerWebhook(string $merchantAccessToken, array $events): mixed
     {
-        $businessId = $this->businessId;
-        if ($this->eventsRequireOrgId($events)) {
-            $businessId = ConfigApp::$orgId;
+        $businessId = $this->resolveBusinessIdForEvents($events);
+        if ($businessId === null) {
+            $this->context->getLog()->error('WebhookService::registerWebhook: unable to resolve businessId for payload');
+
+            return null;
         }
 
         // Build the payload
@@ -80,6 +82,20 @@ class WebhookService
                 'processed'     => true,
                 'error_message' => null,
             ]);
+
+            if (is_array($responseData)) {
+                $responseData['businessId'] = $responseData['businessId'] ?? $businessId;
+
+                if (!isset($responseData['eventTypes']) && isset($payload['eventTypes'])) {
+                    $responseData['eventTypes'] = $payload['eventTypes'];
+                }
+
+                if (!isset($responseData['deliveryUrl']) && isset($payload['deliveryUrl'])) {
+                    $responseData['deliveryUrl'] = $payload['deliveryUrl'];
+                }
+
+                $this->upsert($responseData);
+            }
 
             $this->context->getLog()->info("Webhook registered successfully", $responseData);
             return $responseData;
@@ -351,7 +367,10 @@ class WebhookService
     public function callRegisterWebhook(string $merchantToken, array $events): void
     {
         try {
-            $responseData = $this->registerWebhook($merchantToken, $events);
+            $responseData = $this->ensureWebhookExists(
+                ConfigApp::$webRootUrl . '/webhooks/event-listener',
+                $events
+            );
 
             if ($responseData) {
                 $this->context->getLog()->info('Successfully registered webhooks: ' . implode(', ', $events), $responseData);
@@ -368,6 +387,138 @@ class WebhookService
             // TODO send status HTTP response and exit()
             // throw $e;
         }
+    }
+
+    /**
+     * Ensure that a webhook exists for the current business.
+     *
+     * If an active webhook already exists for the configured delivery URL, it is returned.
+     * Otherwise, a new webhook is registered and any previous hook is removed.
+     *
+     * @param string $deliveryUrl
+     * @param array $eventTypes
+     * @return mixed|null
+     */
+    public function ensureWebhookExists(string $deliveryUrl, array $eventTypes): mixed
+    {
+        $targetBusinessId = $this->resolveBusinessIdForEvents($eventTypes);
+        if ($targetBusinessId === null) {
+            $this->context->getLog()->error('WebhookService::ensureWebhookExists: missing businessId');
+
+            return null;
+        }
+
+        $tokenBusinessId = $this->businessId;
+        if (!is_string($tokenBusinessId) || $tokenBusinessId === '') {
+            $this->context->getLog()->error('WebhookService::ensureWebhookExists: missing merchant businessId for tokens');
+
+            return null;
+        }
+
+        $existingHooks = $this->fetchByBusinessId($tokenBusinessId);
+        if ($existingHooks === false) {
+            return null;
+        }
+
+        $normalizedTargetEvents = $this->normalizeEventTypes($eventTypes);
+        $existingHook = null;
+
+        foreach ($existingHooks as $hook) {
+            if (!is_array($hook)) {
+                continue;
+            }
+
+            $hookEvents = $hook['eventTypes'] ?? [];
+            if (!is_array($hookEvents)) {
+                $hookEvents = [$hookEvents];
+            }
+
+            if ($this->normalizeEventTypes($hookEvents) === $normalizedTargetEvents) {
+                $existingHook = $hook;
+                break;
+            }
+        }
+
+        $shouldRegister = $existingHook === null;
+        $shouldDeleteOldHook = false;
+
+        if ($existingHook !== null) {
+            if (!$this->isHookActive($existingHook)) {
+                $shouldRegister = true;
+            } else {
+                $hookUrl = $existingHook['deliveryUrl'] ?? $existingHook['destinationUrl'] ?? $existingHook['url'] ?? null;
+                if ($hookUrl !== $deliveryUrl) {
+                    $shouldRegister = true;
+                    $shouldDeleteOldHook = true;
+                }
+            }
+
+            if ($shouldRegister === false) {
+                return $existingHook;
+            }
+        }
+
+        $tokenService = new TokenService($this->context);
+        $merchantAccessToken = $tokenService->getMerchantToken($tokenBusinessId);
+
+        if (!is_string($merchantAccessToken) || $merchantAccessToken === '') {
+            $this->context->getLog()->error(
+                sprintf('WebhookService::ensureWebhookExists: missing merchant token for business %s', $tokenBusinessId)
+            );
+
+            return null;
+        }
+
+        if ($shouldDeleteOldHook && is_array($existingHook)) {
+            $hookId = $existingHook['id'] ?? $existingHook['hookId'] ?? null;
+            if (is_string($hookId) && $hookId !== '') {
+                $hookBusinessId = $existingHook['businessId'] ?? $targetBusinessId;
+                $hookEventTypes = $existingHook['eventTypes'] ?? [];
+                if (!is_array($hookEventTypes)) {
+                    $hookEventTypes = [$hookEventTypes];
+                }
+
+                if ($this->eventsRequireOrgId($hookEventTypes)) {
+                    $orgId = ConfigApp::$orgId ?? '';
+                    if (is_string($orgId) && $orgId !== '') {
+                        $hookBusinessId = $orgId;
+                    }
+                }
+
+                try {
+                    $this->httpClient->delete(
+                        self::POYNT_WEBHOOK_URL . '/' . rawurlencode($hookId),
+                        [
+                            'headers' => [
+                                'Authorization' => 'Bearer ' . $merchantAccessToken,
+                            ],
+                            'query' => [
+                                'businessId' => $hookBusinessId,
+                            ],
+                        ]
+                    );
+
+                    $this->context->getLog()->info(
+                        sprintf(
+                            'WebhookService::ensureWebhookExists: deleted old hook %s for business %s',
+                            $hookId,
+                            $hookBusinessId
+                        )
+                    );
+                } catch (BadResponseException|GuzzleException $e) {
+                    $this->context->getLog()->error(
+                        sprintf(
+                            'WebhookService::ensureWebhookExists: failed deleting old hook %s for business %s: %s',
+                            $hookId,
+                            $hookBusinessId,
+                            $e->getMessage()
+                        )
+                    );
+                }
+            }
+        }
+
+        return $this->registerWebhook($merchantAccessToken, $eventTypes);
     }
 
     /**
@@ -388,13 +539,13 @@ class WebhookService
         $hookId = $hookData['id'];
         $businessId = $hookData['businessId'];
 
-        $url = $hookData['url'] ?? $hookData['destinationUrl'] ?? null;
+        $url = $hookData['deliveryUrl'] ?? null;
         $eventTypes = $hookData['eventTypes'] ?? $hookData['events'] ?? [];
         if (!is_array($eventTypes)) {
             $eventTypes = [$eventTypes];
         }
         $eventTypesLiteral = Format::postgresTextArray($eventTypes);
-        $status = $hookData['status'] ?? null;
+        $status = $hookData['active'] ?? null;
         $deliveries = $this->resolveDeliveries($hookData);
         if (!empty($deliveries)) {
             $hookData = $this->stripDeliveries($hookData);
@@ -479,6 +630,14 @@ class WebhookService
             return false;
         }
 
+        if (!is_string($merchantToken) || $merchantToken === '') {
+            $this->context->getLog()->error(
+                sprintf('WebhookService::fetchByBusinessId: missing merchant access token for business %s', $businessId)
+            );
+
+            return false;
+        }
+
         try {
             $hooks = $this->fetchAllHooks($businessId, $appToken);
             if ($hooks === false) {
@@ -491,53 +650,7 @@ class WebhookService
                 return false;
             }
 
-            $deliveries = $this->fetchDeliveriesForBusiness($businessId, $merchantToken);
-
-            $orgBusinessId = ConfigApp::$orgId ?? '';
-            if (
-                is_string($orgBusinessId)
-                && $orgBusinessId !== ''
-                && $orgBusinessId !== $businessId
-            ) {
-                $orgDeliveries = $this->fetchDeliveriesForBusiness($orgBusinessId, $merchantToken);
-                if ($orgDeliveries !== []) {
-                    $deliveries = array_merge($deliveries, $orgDeliveries);
-                }
-            }
-            $deliveriesByHook = [];
-            $deliveriesMissingHookId = [];
-            foreach ($deliveries as $delivery) {
-                if (!is_array($delivery)) {
-                    continue;
-                }
-
-                $deliveryHookId = $delivery['hookId'] ?? null;
-                if ((!is_string($deliveryHookId) || $deliveryHookId === '') && isset($delivery['hook']) && is_array($delivery['hook'])) {
-                    $candidate = $delivery['hook']['id'] ?? $delivery['hook']['hookId'] ?? null;
-                    if (!is_string($candidate) || $candidate === '') {
-                        $candidate = $delivery['hook']['hook']['id'] ?? $delivery['hook']['hook']['hookId'] ?? null;
-                    }
-
-                    if (is_string($candidate) && $candidate !== '') {
-                        $deliveryHookId = $candidate;
-                    }
-                }
-
-                if (!is_string($deliveryHookId) || $deliveryHookId === '') {
-                    $deliveriesMissingHookId[] = $delivery;
-                    continue;
-                }
-
-                if (!isset($deliveriesByHook[$deliveryHookId])) {
-                    $deliveriesByHook[$deliveryHookId] = [];
-                }
-
-                if (!isset($delivery['hookId'])) {
-                    $delivery['hookId'] = $deliveryHookId;
-                }
-
-                $deliveriesByHook[$deliveryHookId][] = $delivery;
-            }
+            $hooks = $this->deleteDuplicateHooks($hooks, $businessId, $merchantToken);
 
             $hooksById = [];
             foreach ($hooks as $hook) {
@@ -550,7 +663,6 @@ class WebhookService
                     continue;
                 }
 
-                $hook['deliveries'] = [];
                 $hooksById[$hookId] = $hook;
             }
 
@@ -563,43 +675,7 @@ class WebhookService
                 ]
             );
 
-            $deliveriesByHookKeys = array_keys($deliveriesByHook);
-            $this->context->getLog()->info(
-                'WebhookService::fetchByBusinessId deliveries grouped by hookId',
-                [
-                    'businessId' => $businessId,
-                    'hookIds' => $deliveriesByHookKeys,
-                ]
-            );
-
-            $unknownHookIds = array_values(array_diff($deliveriesByHookKeys, $hookIds));
-            $this->context->getLog()->info(
-                'WebhookService::fetchByBusinessId deliveries referencing unknown hookIds',
-                [
-                    'businessId' => $businessId,
-                    'hookIds' => $unknownHookIds,
-                ]
-            );
-
-            foreach ($deliveriesByHook as $hookId => $hookDeliveries) {
-                if (isset($hooksById[$hookId])) {
-                    $hooksById[$hookId]['deliveries'] = $hookDeliveries;
-                }
-            }
-
             $hooks = array_values($hooksById);
-
-            if (!empty($deliveriesMissingHookId)) {
-                FetchResponseLogger::info(
-                    $this->context->getLog(),
-                    'WebhookService::fetchByBusinessId deliveries missing hookId',
-                    [
-                        'businessId' => $businessId,
-                        'entity' => 'deliveries',
-                        'payload' => $deliveriesMissingHookId,
-                    ]
-                );
-            }
 
             FetchResponseLogger::info(
                 $this->context->getLog(),
@@ -737,6 +813,129 @@ class WebhookService
         }
 
         return $allDeleted;
+    }
+
+    /**
+     * Remove duplicate hooks by delivery URL and event types, deleting redundant entries via the Poynt API.
+     *
+     * @param array<int, mixed> $hooks
+     * @return array<int, mixed>
+     */
+    private function deleteDuplicateHooks(array $hooks, string $businessId, string $merchantToken): array
+    {
+        $uniqueHooks = [];
+        $seenHookKeys = [];
+
+        foreach ($hooks as $hook) {
+            if (!is_array($hook)) {
+                $uniqueHooks[] = $hook;
+                continue;
+            }
+
+            $hookId = $hook['id'] ?? $hook['hookId'] ?? null;
+            $deliveryUrl = $hook['deliveryUrl'] ?? $hook['destinationUrl'] ?? $hook['url'] ?? null;
+            $eventTypes = $hook['eventTypes'] ?? [];
+
+            if (!is_array($eventTypes)) {
+                $eventTypes = [$eventTypes];
+            }
+
+            if (!is_string($hookId) || $hookId === '' || !is_string($deliveryUrl) || $deliveryUrl === '') {
+                $uniqueHooks[] = $hook;
+                continue;
+            }
+
+            $normalizedEventTypes = $this->normalizeEventTypes($eventTypes);
+            $hookKey = $deliveryUrl . '|' . implode('|', $normalizedEventTypes);
+
+            if (!isset($seenHookKeys[$hookKey])) {
+                $seenHookKeys[$hookKey] = true;
+                $uniqueHooks[] = $hook;
+                continue;
+            }
+
+            $hookBusinessId = $hook['businessId'] ?? $businessId;
+            if (!is_string($hookBusinessId) || $hookBusinessId === '') {
+                $hookBusinessId = $businessId;
+            }
+
+            if ($this->eventsRequireOrgId($eventTypes)) {
+                $orgId = ConfigApp::$orgId ?? '';
+                if (is_string($orgId) && $orgId !== '') {
+                    $hookBusinessId = $orgId;
+                }
+            }
+
+            try {
+                $this->httpClient->delete(
+                    self::POYNT_WEBHOOK_URL . '/' . rawurlencode($hookId),
+                    [
+                        'headers' => [
+                            'Authorization' => 'Bearer ' . $merchantToken,
+                        ],
+                        'query' => [
+                            'businessId' => $hookBusinessId,
+                        ],
+                    ]
+                );
+
+                $this->context->getLog()->info(
+                    'WebhookService::fetchByBusinessId: deleted duplicate hook',
+                    [
+                        'hookId' => $hookId,
+                        'businessId' => $hookBusinessId,
+                        'deliveryUrl' => $deliveryUrl,
+                    ]
+                );
+            } catch (BadResponseException|GuzzleException $e) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'WebhookService::fetchByBusinessId: failed deleting duplicate hook %s for business %s: %s',
+                        $hookId,
+                        $hookBusinessId,
+                        $e->getMessage()
+                    )
+                );
+            }
+        }
+
+        return $uniqueHooks;
+    }
+
+    /**
+     * Determine whether a webhook entry is active.
+     *
+     * @param array $hook
+     * @param string|null $status
+     * @return bool
+     */
+    private function isHookActive(array $hook, ?string $status = null): bool
+    {
+        $statusValue = $status ?? ($hook['active'] ?? null);
+        if ($statusValue === true) {
+            return true;
+        }
+
+        $activeFlag = $hook['active'] ?? null;
+
+        return $activeFlag === true || $activeFlag === 1 || $activeFlag === 'true';
+    }
+
+    /**
+     * Normalize event types for comparison regardless of ordering or duplicates.
+     *
+     * @param array<int, string> $eventTypes
+     * @return array<int, string>
+     */
+    private function normalizeEventTypes(array $eventTypes): array
+    {
+        $normalized = array_filter(array_map(static function ($event) {
+            return is_string($event) ? $event : null;
+        }, $eventTypes));
+
+        sort($normalized);
+
+        return array_values(array_unique($normalized));
     }
 
     /**
@@ -915,6 +1114,29 @@ class WebhookService
         }
 
         return false;
+    }
+
+    /**
+     * Select the correct business identifier for the given events.
+     *
+     * @param array<int, mixed> $events
+     */
+    private function resolveBusinessIdForEvents(array $events): ?string
+    {
+        $businessId = $this->businessId;
+
+        if ($this->eventsRequireOrgId($events)) {
+            $orgId = ConfigApp::$orgId ?? null;
+            if (is_string($orgId) && $orgId !== '') {
+                $businessId = $orgId;
+            }
+        }
+
+        if (!is_string($businessId) || $businessId === '') {
+            return null;
+        }
+
+        return $businessId;
     }
 
     private function normalizeHooks(mixed $payload): array|false
