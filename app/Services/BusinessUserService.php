@@ -161,4 +161,46 @@ class BusinessUserService
             return false;
         }
     }
+
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        $userId = Format::optionalInt($id);
+        if ($userId === null) {
+            $this->context->getLog()->error('BusinessUserService::delete: user id must be numeric');
+
+            return false;
+        }
+
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if ($businessId === null) {
+            $this->context->getLog()->error('BusinessUserService::delete: missing businessId');
+
+            return false;
+        }
+
+        try {
+            $deleted = $this->context->getConn()->executeStatement(
+                'DELETE FROM business_user WHERE business_id = :businessId AND user_id = :userId',
+                [
+                    'businessId' => $businessId,
+                    'userId' => $userId,
+                ]
+            );
+
+            $this->context->getLog()->info(
+                sprintf('BusinessUserService::delete: deleted %d rows for user %d', $deleted, $userId)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $this->context->getLog()->error(
+                sprintf('BusinessUserService::delete: failed for user %d: %s', $userId, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
 }

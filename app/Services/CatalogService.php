@@ -943,4 +943,66 @@ class CatalogService
             );
         }
     }
+
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        $conn = $this->context->getConn();
+
+        try {
+            $conn->beginTransaction();
+
+            $conn->executeStatement(
+                'DELETE FROM catalog_product_tax WHERE catalog_id = :catalogId',
+                ['catalogId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM catalog_product WHERE catalog_id = :catalogId',
+                ['catalogId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM catalog_available_discount WHERE catalog_id = :catalogId',
+                ['catalogId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM category_product WHERE catalog_id = :catalogId',
+                ['catalogId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM category_tax WHERE catalog_id = :catalogId',
+                ['catalogId' => $id]
+            );
+
+            $params = ['catalogId' => $id];
+            $condition = 'catalog_id = :catalogId';
+            if ($businessId !== null) {
+                $condition .= ' AND business_id = :businessId';
+                $params['businessId'] = $businessId;
+            }
+
+            $conn->executeStatement(
+                sprintf('DELETE FROM catalog WHERE %s', $condition),
+                $params
+            );
+
+            $conn->commit();
+
+            $this->context->getLog()->info(
+                sprintf('CatalogService::delete: removed catalog %s and related records', $id)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $conn->rollBack();
+
+            $this->context->getLog()->error(
+                sprintf('CatalogService::delete: failed for catalog %s: %s', $id, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
 }

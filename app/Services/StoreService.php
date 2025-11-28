@@ -140,4 +140,71 @@ class StoreService
 
         return true;
     }
+
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        $conn = $this->context->getConn();
+
+        try {
+            $conn->beginTransaction();
+
+            $inventoryParams = ['storeId' => $id];
+            if ($businessId !== null) {
+                $inventoryParams['businessId'] = $businessId;
+
+                $conn->executeStatement(
+                    'DELETE FROM inventory WHERE business_id = :businessId AND store_id = :storeId',
+                    $inventoryParams
+                );
+
+                $conn->executeStatement(
+                    'DELETE FROM variant_inventory WHERE business_id = :businessId AND store_id = :storeId',
+                    $inventoryParams
+                );
+            } else {
+                $conn->executeStatement(
+                    'DELETE FROM inventory WHERE store_id = :storeId',
+                    ['storeId' => $id]
+                );
+
+                $conn->executeStatement(
+                    'DELETE FROM variant_inventory WHERE store_id = :storeId',
+                    ['storeId' => $id]
+                );
+            }
+
+            $conn->executeStatement(
+                'DELETE FROM terminal WHERE store_id = :storeId',
+                ['storeId' => $id]
+            );
+
+            $storeParams = ['storeId' => $id];
+            $condition = 'store_id = :storeId';
+            if ($businessId !== null) {
+                $condition .= ' AND business_id = :businessId';
+                $storeParams['businessId'] = $businessId;
+            }
+
+            $conn->executeStatement(
+                sprintf('DELETE FROM store WHERE %s', $condition),
+                $storeParams
+            );
+
+            $conn->commit();
+
+            $this->context->getLog()->info(
+                sprintf('StoreService::delete: removed store %s and related records', $id)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $conn->rollBack();
+
+            $this->context->getLog()->error(
+                sprintf('StoreService::delete: failed for store %s: %s', $id, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
 }

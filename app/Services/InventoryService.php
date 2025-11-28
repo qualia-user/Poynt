@@ -729,4 +729,53 @@ class InventoryService
 
         return [$businessId, $productId];
     }
+
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if ($businessId === null) {
+            $this->context->getLog()->error('InventoryService::delete: missing businessId');
+
+            return false;
+        }
+
+        $params = [
+            'businessId' => $businessId,
+            'productId' => $id,
+        ];
+
+        try {
+            $conn = $this->context->getConn();
+
+            $conn->executeStatement(
+                'DELETE FROM variant_inventory WHERE business_id = :businessId AND product_id = :productId',
+                $params
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM inventory WHERE business_id = :businessId AND product_id = :productId',
+                $params
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM inventory_summary WHERE business_id = :businessId AND product_id = :productId',
+                $params
+            );
+
+            $this->context->getLog()->info(
+                sprintf('InventoryService::delete: removed inventory for product %s', $id)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $this->context->getLog()->error(
+                sprintf('InventoryService::delete: failed for product %s: %s', $id, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
 }
