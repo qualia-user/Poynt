@@ -445,4 +445,83 @@ class ProductService
             return false;
         }
     }
+
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        $conn = $this->context->getConn();
+
+        try {
+            $conn->beginTransaction();
+
+            $conn->executeStatement(
+                'DELETE FROM product_variant WHERE product_id = :productId',
+                ['productId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM catalog_product_tax WHERE product_id = :productId',
+                ['productId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM catalog_product WHERE product_id = :productId',
+                ['productId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM category_product WHERE product_id = :productId',
+                ['productId' => $id]
+            );
+
+            if ($businessId !== null) {
+                $inventoryParams = [
+                    'businessId' => $businessId,
+                    'productId' => $id,
+                ];
+
+                $conn->executeStatement(
+                    'DELETE FROM variant_inventory WHERE business_id = :businessId AND product_id = :productId',
+                    $inventoryParams
+                );
+
+                $conn->executeStatement(
+                    'DELETE FROM inventory WHERE business_id = :businessId AND product_id = :productId',
+                    $inventoryParams
+                );
+
+                $conn->executeStatement(
+                    'DELETE FROM inventory_summary WHERE business_id = :businessId AND product_id = :productId',
+                    $inventoryParams
+                );
+            }
+
+            $params = ['productId' => $id];
+            $condition = 'product_id = :productId';
+            if ($businessId !== null) {
+                $condition .= ' AND business_id = :businessId';
+                $params['businessId'] = $businessId;
+            }
+
+            $conn->executeStatement(
+                sprintf('DELETE FROM product WHERE %s', $condition),
+                $params
+            );
+
+            $conn->commit();
+
+            $this->context->getLog()->info(
+                sprintf('ProductService::delete: removed product %s and related records', $id)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $conn->rollBack();
+
+            $this->context->getLog()->error(
+                sprintf('ProductService::delete: failed for product %s: %s', $id, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
 }

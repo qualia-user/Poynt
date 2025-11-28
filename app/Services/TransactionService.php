@@ -420,5 +420,42 @@ class TransactionService
 
         return true;
     }
+
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        $params = ['transactionId' => $id];
+        $condition = 'transaction_id = :transactionId';
+
+        if ($businessId !== null) {
+            $condition .= ' AND business_id = :businessId';
+            $params['businessId'] = $businessId;
+        }
+
+        try {
+            $conn = $this->context->getConn();
+
+            $conn->executeStatement(
+                'DELETE FROM transaction_receipt WHERE transaction_id = :transactionId',
+                ['transactionId' => $id]
+            );
+
+            $deleted = $conn->executeStatement(
+                sprintf('DELETE FROM transaction WHERE %s', $condition),
+                $params
+            );
+
+            $this->context->getLog()->info(
+                sprintf('TransactionService::delete: deleted %d rows for transaction %s', $deleted, $id)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $this->context->getLog()->error(
+                sprintf('TransactionService::delete: failed for transaction %s: %s', $id, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
 }
 

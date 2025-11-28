@@ -525,6 +525,36 @@ class OrderService
         }
     }
 
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        $params = ['orderId' => $id];
+        $condition = 'order_id = :orderId';
+
+        if ($businessId !== null) {
+            $condition .= ' AND business_id = :businessId';
+            $params['businessId'] = $businessId;
+        }
+
+        try {
+            $deleted = $this->context->getConn()->executeStatement(
+                sprintf('DELETE FROM "order" WHERE %s', $condition),
+                $params
+            );
+
+            $this->context->getLog()->info(
+                sprintf('OrderService::delete: deleted %d rows for order %s', $deleted, $id)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $this->context->getLog()->error(
+                sprintf('OrderService::delete: failed for order %s: %s', $id, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
+
     /**
      * @param array<mixed> $data
      * @param array<int, array<int, string>> $paths

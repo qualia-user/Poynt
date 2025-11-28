@@ -151,4 +151,58 @@ class TaxService
             return false;
         }
     }
+
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if ($businessId === null) {
+            $this->context->getLog()->error('TaxService::delete: missing businessId');
+
+            return false;
+        }
+
+        $params = [
+            'taxId' => $id,
+            'businessId' => $businessId,
+        ];
+
+        try {
+            $conn = $this->context->getConn();
+            $conn->beginTransaction();
+
+            $conn->executeStatement(
+                'DELETE FROM catalog_product_tax WHERE tax_id = :taxId',
+                ['taxId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM category_tax WHERE tax_id = :taxId AND business_id = :businessId',
+                $params
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM tax WHERE tax_id = :taxId AND business_id = :businessId',
+                $params
+            );
+
+            $conn->commit();
+
+            $this->context->getLog()->info(
+                sprintf('TaxService::delete: removed tax %s and related records', $id)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $conn->rollBack();
+
+            $this->context->getLog()->error(
+                sprintf('TaxService::delete: failed for tax %s: %s', $id, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
 }

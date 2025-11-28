@@ -308,4 +308,56 @@ class CategoryService
             return false;
         }
     }
+
+    public function delete(string $id, ?string $businessId = null): bool
+    {
+        $conn = $this->context->getConn();
+
+        try {
+            $conn->beginTransaction();
+
+            $conn->executeStatement(
+                'DELETE FROM category_product WHERE category_id = :categoryId',
+                ['categoryId' => $id]
+            );
+
+            $conn->executeStatement(
+                'DELETE FROM category_tax WHERE category_id = :categoryId',
+                ['categoryId' => $id]
+            );
+
+            $params = ['categoryId' => $id];
+            $condition = 'category_id = :categoryId';
+            if ($businessId !== null) {
+                $condition .= ' AND business_id = :businessId';
+                $params['businessId'] = $businessId;
+            }
+
+            $conn->executeStatement(
+                sprintf('UPDATE product SET category_id = NULL WHERE %s', $condition),
+                $params
+            );
+
+            $conn->executeStatement(
+                sprintf('DELETE FROM category WHERE %s', $condition),
+                $params
+            );
+
+            $conn->commit();
+
+            $this->context->getLog()->info(
+                sprintf('CategoryService::delete: removed category %s and related records', $id)
+            );
+
+            return true;
+        } catch (\Throwable $exception) {
+            $conn->rollBack();
+
+            $this->context->getLog()->error(
+                sprintf('CategoryService::delete: failed for category %s: %s', $id, $exception->getMessage())
+            );
+
+            return false;
+        }
+    }
 }
