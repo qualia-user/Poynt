@@ -65,14 +65,28 @@ class Provisioner
         $this->templatePath = $templatePath ?? $this->getDefaultTemplatePath();
     }
 
-    public function provision(string $businessId): bool
+    /**
+     * @param string   $businessId        Tenant identifier
+     * @param string[] $tableBaseNames    Optional subset of template base names to register
+     *
+     * @return array{success: bool, templateVersion?: int, registeredTables?: string[], error?: string}
+     */
+    public function provision(string $businessId, array $tableBaseNames = self::TABLE_BASE_NAMES): array
     {
         $tenantId = trim($businessId);
+        $tableBaseNames = $this->normalizeTableBaseNames($tableBaseNames);
+
+        if ($tableBaseNames === []) {
+            $tableBaseNames = self::TABLE_BASE_NAMES;
+        }
 
         if ($tenantId === '') {
             $this->context->getLog()->error('Provisioner::provision: missing business id');
 
-            return false;
+            return [
+                'success' => false,
+                'error' => 'Missing business id',
+            ];
         }
 
         try {
@@ -85,7 +99,11 @@ class Provisioner
                     ]
                 );
 
-                return true;
+                return [
+                    'success' => true,
+                    'templateVersion' => self::TEMPLATE_VERSION,
+                    'registeredTables' => $tableBaseNames,
+                ];
             }
 
             $statements = $this->renderStatements($tenantId);
@@ -96,7 +114,7 @@ class Provisioner
                 $this->conn->executeStatement($statement);
             }
 
-            $this->registerTenantTables($tenantId);
+            $this->registerTenantTables($tenantId, $tableBaseNames);
 
             $this->conn->commit();
 
@@ -106,27 +124,42 @@ class Provisioner
                     'businessId' => $tenantId,
                     'templateVersion' => self::TEMPLATE_VERSION,
                     'statementCount' => count($statements),
-                    'registeredTables' => count(self::TABLE_BASE_NAMES),
+                    'registeredTables' => count($tableBaseNames),
                 ]
             );
 
-            return true;
+            return [
+                'success' => true,
+                'templateVersion' => self::TEMPLATE_VERSION,
+                'registeredTables' => $tableBaseNames,
+            ];
         } catch (\Throwable $exception) {
             if ($this->conn->isTransactionActive()) {
                 $this->conn->rollBack();
             }
 
-            $this->context->getLog()->error(
-                sprintf(
-                    'Provisioner::provision: failed to provision tenant %s with template %s: %s',
-                    $tenantId,
-                    self::TEMPLATE_VERSION,
-                    $exception->getMessage()
-                )
+            $message = sprintf(
+                'Provisioner::provision: failed to provision tenant %s with template %s: %s',
+                $tenantId,
+                self::TEMPLATE_VERSION,
+                $exception->getMessage()
             );
 
-            return false;
+            $this->context->getLog()->error($message);
+
+            return [
+                'success' => false,
+                'error' => $message,
+            ];
         }
+    }
+
+    /**
+     * @return string[]
+     */
+    public static function getTemplateBaseNames(): array
+    {
+        return self::TABLE_BASE_NAMES;
     }
 
     private function tenantAlreadyProvisioned(string $businessId): bool
@@ -139,15 +172,30 @@ class Provisioner
         return $existing !== false;
     }
 
-    private function registerTenantTables(string $businessId): void
+    private function registerTenantTables(string $businessId, array $tableBaseNames): void
     {
-        foreach (self::TABLE_BASE_NAMES as $baseName) {
+        foreach ($tableBaseNames as $baseName) {
             $this->conn->insert('tenant_table_registry', [
                 'business_id' => $businessId,
                 'table_name' => $this->tableName($businessId, $baseName),
                 'template_version' => self::TEMPLATE_VERSION,
             ]);
         }
+    }
+
+    /**
+     * @param string[] $tableBaseNames
+     *
+     * @return string[]
+     */
+    private function normalizeTableBaseNames(array $tableBaseNames): array
+    {
+        $normalized = array_values(array_unique(array_filter(array_map(
+            static fn (string $name): string => trim($name),
+            array_map('strval', $tableBaseNames)
+        ), static fn (string $name): bool => $name !== '')));
+
+        return $normalized;
     }
 
     /**
