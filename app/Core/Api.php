@@ -297,6 +297,9 @@ class Api
         $router->get('/subscriptions/status', ['App\Controllers\SubscriptionController', 'status']);
         $router->post('/subscriptions/start-trial', ['App\Controllers\SubscriptionController', 'startTrial']);
 
+        // Tenant provisioning
+        $router->post('/tenants/provision', ['App\Controllers\TenantController', 'provision']);
+
         // Developer utilities
         $router->get('/sanity-check', ['App\Controllers\SanityCheckController', 'index']);
 

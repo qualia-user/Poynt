@@ -17,6 +17,7 @@ namespace Controllers {
 
     use App\Controllers\OAuthController;
     use App\Controllers\SubscriptionController;
+    use App\Controllers\TenantController;
     use App\Controllers\TokenController;
     use App\Controllers\WebhooksController;
     use App\Core\Api;
@@ -32,6 +33,8 @@ namespace Controllers {
     use App\Services\ProductService;
     use App\Services\ServiceFactory;
     use App\Services\SubscriptionService;
+    use App\Services\Tenant\Provisioner;
+    use App\Services\Tenant\TenantProvisioningService;
     use App\Services\TransactionService;
     use Doctrine\DBAL\Connection;
     use League\Container\Container;
@@ -293,6 +296,87 @@ namespace Controllers {
                 'subscriptionId' => 'sub-456',
                 'status' => 'free_trial',
             ], $result);
+        }
+
+        public function testTenantProvisionEndpointReturnsProvisionResult(): void
+        {
+            $api = $this->createApi([
+                'tenantId' => 'biz-123',
+                'templates' => ['store', 'subscription'],
+            ], 'POST');
+            $context = $this->createContext($api);
+
+            $service = $this->getMockBuilder(TenantProvisioningService::class)
+                ->disableOriginalConstructor()
+                ->onlyMethods(['provisionTenant'])
+                ->getMock();
+
+            $service->expects(self::once())
+                ->method('provisionTenant')
+                ->with('biz-123', ['store', 'subscription'])
+                ->willReturn([
+                    'success' => true,
+                    'status' => 'provisioned',
+                    'tenantId' => 'biz-123',
+                    'templates' => ['store', 'subscription'],
+                    'templateVersion' => 2025120201,
+                ]);
+
+            $controller = new TenantController($context);
+            $controller->setTenantProvisioningService($service);
+
+            $controller->provision();
+            $last = Api::getLastResponse();
+
+            self::assertNotNull($last);
+            self::assertSame(Response::STATUS_OK, $last['status']);
+            self::assertSame([
+                'success' => true,
+                'status' => 'provisioned',
+                'tenantId' => 'biz-123',
+                'templates' => ['store', 'subscription'],
+                'templateVersion' => 2025120201,
+            ], $last['response']);
+        }
+
+        public function testTenantProvisionEndpointSurfacesErrors(): void
+        {
+            $api = $this->createApi([
+                'tenantId' => 'biz-404',
+            ], 'POST');
+            $context = $this->createContext($api);
+
+            $service = $this->getMockBuilder(TenantProvisioningService::class)
+                ->disableOriginalConstructor()
+                ->onlyMethods(['provisionTenant'])
+                ->getMock();
+
+            $service->expects(self::once())
+                ->method('provisionTenant')
+                ->with('biz-404', [])
+                ->willReturn([
+                    'success' => false,
+                    'status' => 'failed',
+                    'tenantId' => 'biz-404',
+                    'templates' => Provisioner::getTemplateBaseNames(),
+                    'message' => 'DDL failure',
+                ]);
+
+            $controller = new TenantController($context);
+            $controller->setTenantProvisioningService($service);
+
+            $controller->provision();
+            $last = Api::getLastResponse();
+
+            self::assertNotNull($last);
+            self::assertSame(Response::STATUS_BAD_REQUEST, $last['status']);
+            self::assertSame([
+                'success' => false,
+                'status' => 'failed',
+                'tenantId' => 'biz-404',
+                'templates' => Provisioner::getTemplateBaseNames(),
+                'message' => 'DDL failure',
+            ], $last['response']);
         }
 
         public function testWebhookEndpointProcessesSubscriptionStartEvent(): void
