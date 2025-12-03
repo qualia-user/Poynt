@@ -346,6 +346,8 @@ namespace Controllers {
             ], 'POST');
             $context = $this->createContext($api);
 
+            $defaultTemplates = (new Provisioner($context))->getTemplateBaseNames();
+
             $service = $this->getMockBuilder(TenantProvisioningService::class)
                 ->disableOriginalConstructor()
                 ->onlyMethods(['provisionTenant'])
@@ -358,7 +360,7 @@ namespace Controllers {
                     'success' => false,
                     'status' => 'failed',
                     'tenantId' => 'biz-404',
-                    'templates' => Provisioner::getTemplateBaseNames(),
+                    'templates' => $defaultTemplates,
                     'message' => 'DDL failure',
                 ]);
 
@@ -374,7 +376,7 @@ namespace Controllers {
                 'success' => false,
                 'status' => 'failed',
                 'tenantId' => 'biz-404',
-                'templates' => Provisioner::getTemplateBaseNames(),
+                'templates' => $defaultTemplates,
                 'message' => 'DDL failure',
             ], $last['response']);
         }
