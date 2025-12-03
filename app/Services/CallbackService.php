@@ -6,6 +6,7 @@ use App\Core\Context;
 use App\Core\Response;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\OAuthHandlerInterface;
+use App\Services\Tenant\TenantProvisioningService;
 use RuntimeException;
 use Throwable;
 
@@ -14,15 +15,18 @@ class CallbackService
     private Context $context;
     private PlatformRegistry $platformRegistry;
     private ServiceFactory $serviceFactory;
+    private TenantProvisioningService $tenantProvisioningService;
 
     public function __construct(
         Context $context,
         PlatformRegistry $platformRegistry,
-        ?ServiceFactory $serviceFactory = null
+        ?ServiceFactory $serviceFactory = null,
+        ?TenantProvisioningService $tenantProvisioningService = null
     ) {
         $this->context = $context;
         $this->platformRegistry = $platformRegistry;
         $this->serviceFactory = $serviceFactory ?? new ServiceFactory($context);
+        $this->tenantProvisioningService = $tenantProvisioningService ?? new TenantProvisioningService($context);
     }
 
     /**
@@ -58,6 +62,14 @@ class CallbackService
         $requestedPlanId = $this->normalizePlanParameter($this->context->getApi()->getParam('planId'));
         $requestedPlanName = $this->normalizePlanParameter($this->context->getApi()->getParam('planName'));
 
+        if (!$this->prepareTenantStorage($handler->getBusinessId())) {
+            return [
+                'success' => false,
+                'status' => Response::STATUS_INTERNAL_SERVER_ERROR,
+                'error' => 'Failed to prepare tenant storage for onboarding.',
+            ];
+        }
+
         $workflowSucceeded = $this->runBusinessWorkflow(
             $handler->getBusinessId(),
             $handler->getStoreId(),
@@ -82,6 +94,44 @@ class CallbackService
             'status' => Response::STATUS_OK,
             'message' => 'Callback handled',
         ];
+    }
+
+    private function prepareTenantStorage(?string $businessId): bool
+    {
+        if ($businessId === null || $businessId === '') {
+            $this->context->getLog()->error('CallbackService::prepareTenantStorage missing business identifier.');
+
+            return false;
+        }
+
+        $businessService = $this->serviceFactory->business($businessId);
+
+        if (!$this->syncResourceCollection($businessId, $businessService, get_class($businessService))) {
+            $this->context->getLog()->warning(
+                sprintf('CallbackService::prepareTenantStorage failed to sync business record for %s.', $businessId)
+            );
+
+            return false;
+        }
+
+        $provisioning = $this->tenantProvisioningService->provisionTenant($businessId);
+        if (!($provisioning['success'] ?? false)) {
+            $this->context->getLog()->error(
+                sprintf('CallbackService::prepareTenantStorage failed provisioning for %s: %s', $businessId, $provisioning['message'] ?? 'Unknown error')
+            );
+
+            return false;
+        }
+
+        $this->context->getLog()->info(
+            sprintf(
+                'CallbackService::prepareTenantStorage provisioned tenant %s with templates: %s',
+                $businessId,
+                implode(',', $provisioning['templates'] ?? [])
+            )
+        );
+
+        return true;
     }
 
     /**

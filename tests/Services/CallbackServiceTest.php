@@ -8,6 +8,7 @@ use App\Core\Context;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Services\CallbackService;
 use App\Services\ServiceFactory;
+use App\Services\Tenant\TenantProvisioningService;
 use Doctrine\DBAL\Connection;
 use Monolog\Logger;
 use PHPUnit\Framework\TestCase;
@@ -317,5 +318,94 @@ class CallbackServiceTest extends TestCase
         $method->setAccessible(true);
 
         $this->assertSame('plan-pro', $method->invoke($callbackService, $plans, 'PRO'));
+    }
+
+    public function testPrepareTenantStorageSyncsBusinessBeforeProvisioning(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $businessService = new class {
+            public array $upserted = [];
+
+            public function fetchByBusinessId(?string $businessId = null): array
+            {
+                return [['id' => $businessId, 'legalName' => 'Example Biz']];
+            }
+
+            public function upsert(array $payload): bool
+            {
+                $this->upserted[] = $payload;
+
+                return true;
+            }
+        };
+
+        $serviceFactory = $this->createMock(ServiceFactory::class);
+        $serviceFactory->method('business')->willReturn($businessService);
+
+        $tenantProvisioningService = $this->createMock(TenantProvisioningService::class);
+        $tenantProvisioningService->expects($this->once())
+            ->method('provisionTenant')
+            ->with('biz-123')
+            ->willReturn(['success' => true, 'templates' => ['store']]);
+
+        $callbackService = new CallbackService(
+            $context,
+            $this->createMock(PlatformRegistry::class),
+            $serviceFactory,
+            $tenantProvisioningService
+        );
+
+        $method = new ReflectionMethod($callbackService, 'prepareTenantStorage');
+        $method->setAccessible(true);
+
+        $this->assertTrue($method->invoke($callbackService, 'biz-123'));
+        $this->assertCount(1, $businessService->upserted);
+    }
+
+    public function testPrepareTenantStorageHaltsWhenProvisioningFails(): void
+    {
+        $logger = $this->createMock(Logger::class);
+        $logger->expects($this->once())
+            ->method('error')
+            ->with($this->stringContains('failed provisioning'));
+
+        $context = $this->createMock(Context::class);
+        $context->method('getLog')->willReturn($logger);
+
+        $businessService = new class {
+            public function fetchByBusinessId(?string $businessId = null): array
+            {
+                return [['id' => $businessId, 'legalName' => 'Example Biz']];
+            }
+
+            public function upsert(array $payload): bool
+            {
+                return true;
+            }
+        };
+
+        $serviceFactory = $this->createMock(ServiceFactory::class);
+        $serviceFactory->method('business')->willReturn($businessService);
+
+        $tenantProvisioningService = $this->createMock(TenantProvisioningService::class);
+        $tenantProvisioningService->expects($this->once())
+            ->method('provisionTenant')
+            ->with('biz-123')
+            ->willReturn(['success' => false, 'message' => 'boom']);
+
+        $callbackService = new CallbackService(
+            $context,
+            $this->createMock(PlatformRegistry::class),
+            $serviceFactory,
+            $tenantProvisioningService
+        );
+
+        $method = new ReflectionMethod($callbackService, 'prepareTenantStorage');
+        $method->setAccessible(true);
+
+        $this->assertFalse($method->invoke($callbackService, 'biz-123'));
     }
 }
