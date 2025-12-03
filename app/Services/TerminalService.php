@@ -4,14 +4,21 @@ namespace App\Services;
 
 use App\Core\Context;
 use App\Services\Support\PoyntDataFormatter as Format;
+use App\Services\Support\TableNamer;
 
 class TerminalService
 {
     private Context $context;
 
-    public function __construct(Context $context)
+    private TableNamer $tableNamer;
+
+    private ?string $businessId;
+
+    public function __construct(Context $context, ?string $businessId = null)
     {
         $this->context = $context;
+        $this->tableNamer = new TableNamer($context->getConn());
+        $this->businessId = $businessId;
     }
 
     /**
@@ -28,8 +35,10 @@ class TerminalService
             return true;
         }
 
+        $terminalTable = $this->table('terminal');
+
         $sql = <<<SQL
-        INSERT INTO terminal
+        INSERT INTO {$terminalTable}
             (terminal_id, store_id, metadata, created_at, updated_at)
         VALUES
             (:terminalId, :storeId, :metadata, :createdAt, :updatedAt)
@@ -97,7 +106,7 @@ class TerminalService
     {
         try {
             $rows = $this->context->getConn()->fetchAllAssociative(
-                'SELECT * FROM terminal WHERE store_id = ?',
+                sprintf('SELECT * FROM %s WHERE store_id = ?', $this->table('terminal')),
                 [$storeId]
             );
             return $rows ?: [];
@@ -120,7 +129,7 @@ class TerminalService
     {
         try {
             $row = $this->context->getConn()->fetchAssociative(
-                'SELECT * FROM terminal WHERE terminal_id = ?',
+                sprintf('SELECT * FROM %s WHERE terminal_id = ?', $this->table('terminal')),
                 [$terminalId]
             );
             return $row ?: false;
@@ -130,5 +139,10 @@ class TerminalService
             );
             return false;
         }
+    }
+
+    private function table(string $baseName): string
+    {
+        return $this->tableNamer->for($this->businessId, $baseName);
     }
 }

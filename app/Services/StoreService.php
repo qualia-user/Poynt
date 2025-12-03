@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Core\Context;
 use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
+use App\Services\Support\TableNamer;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -15,11 +16,13 @@ class StoreService
     private Context $context;
     private ClientInterface $httpClient;
     private ?string $businessId = null;
+    private TableNamer $tableNamer;
 
     public function __construct(Context $context, ?string $businessId = null, ?ClientInterface $httpClient = null)
     {
         $this->context = $context;
         $this->httpClient = $httpClient ?? $context->getHttpClient();
+        $this->tableNamer = new TableNamer($context->getConn());
         if ($businessId !== null) {
             $this->businessId = $businessId;
         }
@@ -94,8 +97,9 @@ class StoreService
 
         $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
+        $storeTable = $this->table('store', $businessId);
         $sql = <<<SQL
-        INSERT INTO store (
+        INSERT INTO {$storeTable} (
             store_id,
             business_id,
             name,
@@ -134,7 +138,7 @@ class StoreService
 
         $devices = $storeData['storeDevices'] ?? [];
         if (is_array($devices) && !empty($devices)) {
-            $terminalService = new TerminalService($this->context);
+            $terminalService = new TerminalService($this->context, $businessId);
             $terminalService->upsertTerminals($devices, $storeId);
         }
 
@@ -148,33 +152,38 @@ class StoreService
         try {
             $conn->beginTransaction();
 
+            $inventoryTable = $this->table('inventory', $businessId);
+            $variantInventoryTable = $this->table('variant_inventory', $businessId);
+            $terminalTable = $this->table('terminal', $businessId);
+            $storeTable = $this->table('store', $businessId);
+
             $inventoryParams = ['storeId' => $id];
             if ($businessId !== null) {
                 $inventoryParams['businessId'] = $businessId;
 
                 $conn->executeStatement(
-                    'DELETE FROM inventory WHERE business_id = :businessId AND store_id = :storeId',
+                    sprintf('DELETE FROM %s WHERE business_id = :businessId AND store_id = :storeId', $inventoryTable),
                     $inventoryParams
                 );
 
                 $conn->executeStatement(
-                    'DELETE FROM variant_inventory WHERE business_id = :businessId AND store_id = :storeId',
+                    sprintf('DELETE FROM %s WHERE business_id = :businessId AND store_id = :storeId', $variantInventoryTable),
                     $inventoryParams
                 );
             } else {
                 $conn->executeStatement(
-                    'DELETE FROM inventory WHERE store_id = :storeId',
+                    sprintf('DELETE FROM %s WHERE store_id = :storeId', $inventoryTable),
                     ['storeId' => $id]
                 );
 
                 $conn->executeStatement(
-                    'DELETE FROM variant_inventory WHERE store_id = :storeId',
+                    sprintf('DELETE FROM %s WHERE store_id = :storeId', $variantInventoryTable),
                     ['storeId' => $id]
                 );
             }
 
             $conn->executeStatement(
-                'DELETE FROM terminal WHERE store_id = :storeId',
+                sprintf('DELETE FROM %s WHERE store_id = :storeId', $terminalTable),
                 ['storeId' => $id]
             );
 
@@ -186,7 +195,7 @@ class StoreService
             }
 
             $conn->executeStatement(
-                sprintf('DELETE FROM store WHERE %s', $condition),
+                sprintf('DELETE FROM %s WHERE %s', $storeTable, $condition),
                 $storeParams
             );
 
@@ -206,5 +215,10 @@ class StoreService
 
             return false;
         }
+    }
+
+    private function table(string $baseName, ?string $businessId = null): string
+    {
+        return $this->tableNamer->for($businessId ?? $this->businessId, $baseName);
     }
 }
