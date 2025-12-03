@@ -1,14 +1,15 @@
 # Poynt Service
 
-## Tenant schema provisioning
-The database migration `2025120201_create_tenant_schema_procedures.sql` adds helper procedures for tenant-scoped tables. Provision a tenant by calling `provision_tenant_schema` with the tenant identifier, which expands the `_template` base tables into `<tenant_id>_<base>` copies in dependency order, applies indexes and constraints, grants the `poynt_app_rw`/`poynt_app_ro` roles, and records the version in `tenant_schema_version`.
+
+## Business schema provisioning
+The database migration `2025120201_create_business_schema_procedures.sql` adds helper procedures for business-scoped tables. Provision a business by calling `provision_business_schema` with the business identifier, which expands the `_template` base tables into `<business_id>_<base>` copies in dependency order, applies indexes and constraints, grants the `poynt_app_rw`/`poynt_app_ro` roles, and records the version in `business_schema_version`.
 
 ```sql
-CALL provision_tenant_schema('demo_tenant');
+CALL provision_business_schema('demo_business');
 ```
 
-To deprovision, use `drop_tenant_schema` to remove all tenant-prefixed tables and clear the version entry:
+To deprovision, use `drop_business_schema` to remove all business-prefixed tables and clear the version entry:
 
 ```sql
-CALL drop_tenant_schema('demo_tenant');
+CALL drop_business_schema('demo_business');
 ```
