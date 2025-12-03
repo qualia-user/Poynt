@@ -3,6 +3,11 @@
 ## Tenant schema provisioning
 Tenant schemas are now managed directly in PHP via `App\Services\Tenant\Provisioner`. The service reads `SQL/poynt-tenant-templates.sql`, expands each `_template` table/index definition into `<tenant>_...` statements for the requested tenant, replays them through the Doctrine connection provided by `Context`, and upserts the current version into `tenant_schema_version`. Templates no longer carry `business_id` columns because every tenant receives its own physical tables; the only shared lookup record is the `business` row that registers a tenant. 【F:SQL/poynt-tenant-templates.sql†L1-L22】
 
+### Fresh database bootstrap and onboarding
+1. Apply `SQL/poynt-v4.sql` to create the shared registry tables (`business`, `tenant_schema_version`, `tenant_table_registry`). No business data tables are created by this script. 【F:SQL/poynt-v4.sql†L1-L32】
+2. When a merchant completes OAuth and reaches `/callback`, `CallbackService::prepareTenantStorage` syncs the `business` row and invokes `TenantProvisioningService::provisionTenant`, which expands all templates in `SQL/poynt-tenant-templates.sql` for that tenant. This creates the `<tenant>_*` tables and indexes automatically before the onboarding workflow continues. 【F:app/Services/CallbackService.php†L65-L135】【F:SQL/poynt-tenant-templates.sql†L1-L22】
+3. Provisioning can also be triggered manually through `POST /tenants/provision` if you need to (re)create tables outside the OAuth flow. 【F:app/Controllers/TenantController.php†L17-L30】
+
 ### Per-business table workflow
 1. **Register the tenant** by inserting a row into `business` (the global registry). Provisioning calls will fail if the tenant row is missing. 【F:app/Services/Tenant/TenantProvisioningService.php†L45-L54】
 2. **Provision tenant tables** by hitting `POST /tenants/provision` with `tenantId` and optional `templates` parameters (defaults to all templates). The controller normalizes the request and forwards it to `TenantProvisioningService`, which defers to `Provisioner` for SQL expansion and execution. 【F:app/Core/Api.php†L296-L305】【F:app/Controllers/TenantController.php†L17-L30】【F:app/Services/Tenant/Provisioner.php†L49-L118】
