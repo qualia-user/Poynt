@@ -101,20 +101,17 @@ class StoreService
         $sql = <<<SQL
         INSERT INTO {$storeTable} (
             store_id,
-            business_id,
             name,
             metadata,
             created_at,
             updated_at
         ) VALUES (
             :storeId,
-            :businessId,
             :name,
             :metadata,
             :createdAt,
             :updatedAt
         ) ON CONFLICT (store_id) DO UPDATE SET
-            business_id = EXCLUDED.business_id,
             name        = EXCLUDED.name,
             metadata    = EXCLUDED.metadata,
             updated_at  = EXCLUDED.updated_at
@@ -123,7 +120,6 @@ class StoreService
         try {
             $this->context->getConn()->executeStatement($sql, [
                 'storeId'    => $storeId,
-                'businessId' => $businessId,
                 'name'       => $name,
                 'metadata'   => $metadata,
                 'createdAt'  => $now,
@@ -157,46 +153,24 @@ class StoreService
             $terminalTable = $this->table('terminal', $businessId);
             $storeTable = $this->table('store', $businessId);
 
-            $inventoryParams = ['storeId' => $id];
-            if ($businessId !== null) {
-                $inventoryParams['businessId'] = $businessId;
+            $conn->executeStatement(
+                sprintf('DELETE FROM %s WHERE store_id = :storeId', $inventoryTable),
+                ['storeId' => $id]
+            );
 
-                $conn->executeStatement(
-                    sprintf('DELETE FROM %s WHERE business_id = :businessId AND store_id = :storeId', $inventoryTable),
-                    $inventoryParams
-                );
-
-                $conn->executeStatement(
-                    sprintf('DELETE FROM %s WHERE business_id = :businessId AND store_id = :storeId', $variantInventoryTable),
-                    $inventoryParams
-                );
-            } else {
-                $conn->executeStatement(
-                    sprintf('DELETE FROM %s WHERE store_id = :storeId', $inventoryTable),
-                    ['storeId' => $id]
-                );
-
-                $conn->executeStatement(
-                    sprintf('DELETE FROM %s WHERE store_id = :storeId', $variantInventoryTable),
-                    ['storeId' => $id]
-                );
-            }
+            $conn->executeStatement(
+                sprintf('DELETE FROM %s WHERE store_id = :storeId', $variantInventoryTable),
+                ['storeId' => $id]
+            );
 
             $conn->executeStatement(
                 sprintf('DELETE FROM %s WHERE store_id = :storeId', $terminalTable),
                 ['storeId' => $id]
             );
 
-            $storeParams = ['storeId' => $id];
-            $condition = 'store_id = :storeId';
-            if ($businessId !== null) {
-                $condition .= ' AND business_id = :businessId';
-                $storeParams['businessId'] = $businessId;
-            }
-
             $conn->executeStatement(
-                sprintf('DELETE FROM %s WHERE %s', $storeTable, $condition),
-                $storeParams
+                sprintf('DELETE FROM %s WHERE store_id = :storeId', $storeTable),
+                ['storeId' => $id]
             );
 
             $conn->commit();

@@ -32,10 +32,10 @@ class TokenService {
     // ────────────────────────────────────────────────────────────────────────────────
 
     /**
-     * Insert or update the app-level token row for a given business_id.
+     * Insert or update the app-level token row for a given tenant.
      *
-     * @param string $businessId
-     * @param array $token
+     * @param string $businessId Tenant identifier used to resolve the table name
+     * @param array  $token
      * @return void
      * @throws \DateMalformedIntervalStringException
      */
@@ -56,9 +56,9 @@ class TokenService {
         $appTokenTable = $this->tableNamer->for($businessId, 'app_token');
         $sql = <<<SQL
         INSERT INTO {$appTokenTable}
-            (business_id, access_token, refresh_token, expires_at)
-        VALUES (:biz, :access, :refresh, :exp)
-        ON CONFLICT (business_id) DO UPDATE SET
+            (app_token_id, access_token, refresh_token, expires_at)
+        VALUES (1, :access, :refresh, :exp)
+        ON CONFLICT (app_token_id) DO UPDATE SET
             access_token  = EXCLUDED.access_token,
             refresh_token = EXCLUDED.refresh_token,
             expires_at    = EXCLUDED.expires_at,
@@ -68,14 +68,13 @@ class TokenService {
         try {
             $stmt = $this->context->getConn()->prepare($sql);
             $stmt->executeStatement([
-                'biz'     => $businessId,
                 'access'  => $token['accessToken'],
                 'refresh' => $token['refreshToken'],
                 'exp'     => $token['expiresIn']->format('Y-m-d H:i:sP'),
             ]);
         } catch (\Exception $e) {
             throw new \RuntimeException(
-                "Failed to save app token for business_id={$businessId}: " . $e->getMessage(),
+                "Failed to save app token for tenant={$businessId}: " . $e->getMessage(),
                 (int)$e->getCode(),
                 $e
             );
@@ -83,9 +82,9 @@ class TokenService {
     }
 
     /**
-     * Fetch the current app-level token (access, refresh, expires_at) for a given business_id.
+     * Fetch the current app-level token (access, refresh, expires_at) for a given tenant.
      *
-     * @param string $businessId
+     * @param string $businessId Tenant identifier used to resolve the table name
      * @param bool $array
      * @return array|null  ['access_token'=>string, 'refresh_token'=>string, 'expires_at'=>string] or null if not found
      */
@@ -97,13 +96,11 @@ class TokenService {
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
           FROM {$appTokenTable}
-         WHERE business_id = :biz
          LIMIT 1
         SQL;
 
         try {
             $row = $this->context->getConn()->fetchAssociative($sql, [
-                'biz' => $businessId
             ]);
 
             if ($array) {
@@ -113,7 +110,7 @@ class TokenService {
             return $row === false ? null : $row['access_token'];
         } catch (\Exception $e) {
             throw new \RuntimeException(
-                "Failed to fetch app token for business_id={$businessId}: " . $e->getMessage(),
+                "Failed to fetch app token for tenant={$businessId}: " . $e->getMessage(),
                 (int)$e->getCode(),
                 $e
             );
@@ -121,22 +118,23 @@ class TokenService {
     }
 
     /**
-     * Find all app-level tokens that expire within the next $minutes minutes.
+     * Find all app-level tokens that expire within the next $minutes minutes for a tenant.
      *
-     * @param int $minutes  Look-ahead window in minutes (defaults to 30).
-     * @return array[]      Each element: ['business_id'=>..., 'access_token'=>..., 'refresh_token'=>..., 'expires_at'=>...]
+     * @param string $businessId Tenant identifier used to resolve the table name
+     * @param int    $minutes     Look-ahead window in minutes (defaults to 30).
+     * @return array[]      Each element: ['access_token'=>..., 'refresh_token'=>..., 'expires_at'=>...]
      * @throws Exception on SQL error
      */
-    public function findExpiringAppTokens(int $minutes = 30): array
+    public function findExpiringAppTokens(string $businessId, int $minutes = 30): array
     {
         $this->resetFailedTransactionIfNeeded();
 
         // Safely interpolate $minutes into the INTERVAL clause
         $intervalSql = "NOW() + INTERVAL '{$minutes} minutes'";
 
-        $appTokenTable = $this->tableNamer->for(null, 'app_token');
+        $appTokenTable = $this->tableNamer->for($businessId, 'app_token');
         $sql = <<<SQL
-        SELECT business_id, access_token, refresh_token, expires_at
+        SELECT access_token, refresh_token, expires_at
           FROM {$appTokenTable}
          WHERE expires_at <= {$intervalSql}
         SQL;
@@ -146,7 +144,7 @@ class TokenService {
             return $stmt->executeQuery()->fetchAllAssociative();
         } catch (\Exception $e) {
             throw new \RuntimeException(
-                "Failed to query expiring app tokens (next {$minutes} minutes): " . $e->getMessage(),
+                "Failed to query expiring app tokens for tenant={$businessId} (next {$minutes} minutes): " . $e->getMessage(),
                 (int)$e->getCode(),
                 $e
             );
@@ -158,10 +156,10 @@ class TokenService {
     // ────────────────────────────────────────────────────────────────────────────────
 
     /**
-     * Insert or update the merchant-level token row for a given business_id.
+     * Insert or update the merchant-level token row for a given tenant.
      *
-     * @param string $businessId
-     * @param array $token
+     * @param string $businessId Tenant identifier used to resolve the table name
+     * @param array  $token
      * @return void
      * @throws \DateMalformedIntervalStringException
      */
@@ -180,9 +178,9 @@ class TokenService {
         $merchantTokenTable = $this->tableNamer->for($businessId, 'merchant_token');
         $sql = <<<SQL
         INSERT INTO {$merchantTokenTable}
-            (business_id, access_token, refresh_token, expires_at)
-        VALUES (:biz, :access, :refresh, :exp)
-        ON CONFLICT (business_id) DO UPDATE SET
+            (merchant_token_id, access_token, refresh_token, expires_at)
+        VALUES (1, :access, :refresh, :exp)
+        ON CONFLICT (merchant_token_id) DO UPDATE SET
             access_token  = EXCLUDED.access_token,
             refresh_token = EXCLUDED.refresh_token,
             expires_at    = EXCLUDED.expires_at,
@@ -192,14 +190,13 @@ class TokenService {
         try {
             $stmt = $this->context->getConn()->prepare($sql);
             $stmt->executeStatement([
-                'biz'     => $businessId,
                 'access'  => $token['accessToken'],
                 'refresh' => $token['refreshToken'],
                 'exp'     => $token['expiresIn']->format('Y-m-d H:i:sP'),
             ]);
         } catch (\Exception $e) {
             throw new \RuntimeException(
-                "Failed to save merchant token for business_id={$businessId}: " . $e->getMessage(),
+                "Failed to save merchant token for tenant={$businessId}: " . $e->getMessage(),
                 (int)$e->getCode(),
                 $e
             );
@@ -207,9 +204,9 @@ class TokenService {
     }
 
     /**
-     * Fetch the current merchant-level token for a given business_id.
+     * Fetch the current merchant-level token for a given tenant.
      *
-     * @param string $businessId
+     * @param string $businessId Tenant identifier used to resolve the table name
      * @param bool $array
      * @return array|null   ['access_token'=>string, 'refresh_token'=>string, 'expires_at'=>string] or null if not found
      */
@@ -221,13 +218,11 @@ class TokenService {
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
           FROM {$merchantTokenTable}
-         WHERE business_id = :biz
          LIMIT 1
         SQL;
 
         try {
             $row = $this->context->getConn()->fetchAssociative($sql, [
-                'biz' => $businessId
             ]);
 
             if ($array) {
@@ -237,7 +232,7 @@ class TokenService {
             return $row === false ? null : $row['access_token'];
         } catch (\Exception $e) {
             throw new \RuntimeException(
-                "Failed to fetch merchant token for business_id={$businessId}: " . $e->getMessage(),
+                "Failed to fetch merchant token for tenant={$businessId}: " . $e->getMessage(),
                 (int)$e->getCode(),
                 $e
             );
@@ -245,21 +240,22 @@ class TokenService {
     }
 
     /**
-     * Find all merchant-level tokens that are expiring within the next $minutes minutes.
+     * Find all merchant-level tokens that are expiring within the next $minutes minutes for a tenant.
      *
-     * @param int $minutes  Look-ahead window in minutes (defaults to 30).
-     * @return array[]      Each element: ['business_id'=>..., 'access_token'=>..., 'refresh_token'=>..., 'expires_at'=>...]
+     * @param string $businessId Tenant identifier used to resolve the table name
+     * @param int    $minutes  Look-ahead window in minutes (defaults to 30).
+     * @return array[]      Each element: ['access_token'=>..., 'refresh_token'=>..., 'expires_at'=>...]
      * @throws Exception on SQL error
      */
-    public function findExpiringMerchantTokens(int $minutes = 30): array
+    public function findExpiringMerchantTokens(string $businessId, int $minutes = 30): array
     {
         $this->resetFailedTransactionIfNeeded();
 
         $intervalSql = "NOW() + INTERVAL '{$minutes} minutes'";
 
-        $merchantTokenTable = $this->tableNamer->for(null, 'merchant_token');
+        $merchantTokenTable = $this->tableNamer->for($businessId, 'merchant_token');
         $sql = <<<SQL
-        SELECT business_id, access_token, refresh_token, expires_at
+        SELECT access_token, refresh_token, expires_at
           FROM {$merchantTokenTable}
          WHERE expires_at <= {$intervalSql}
         SQL;
@@ -269,7 +265,7 @@ class TokenService {
             return $stmt->executeQuery()->fetchAllAssociative();
         } catch (\Exception $e) {
             throw new \RuntimeException(
-                "Failed to query expiring merchant tokens (next {$minutes} minutes): " . $e->getMessage(),
+                "Failed to query expiring merchant tokens for tenant={$businessId} (next {$minutes} minutes): " . $e->getMessage(),
                 (int)$e->getCode(),
                 $e
             );
@@ -304,7 +300,7 @@ class TokenService {
     /**
      * Persist an attempt to refresh a token.
      *
-     * @param string      $businessId
+     * @param string      $businessId Tenant identifier used to resolve the table name
      * @param string      $type     'app' or 'merchant'
      * @param bool        $success
      * @param string|null $message
@@ -316,21 +312,20 @@ class TokenService {
 
         $refreshLogTable = $this->tableNamer->for($businessId, 'token_refresh_log');
         $sql = <<<SQL
-        INSERT INTO {$refreshLogTable} (business_id, token_type, attempted_at, success, message)
-        VALUES (:biz, :type, NOW(), :success, :message)
+        INSERT INTO {$refreshLogTable} (token_type, attempted_at, success, message)
+        VALUES (:type, NOW(), :success, :message)
         SQL;
 
         try {
             $stmt = $this->context->getConn()->prepare($sql);
             $stmt->executeStatement([
-                'biz'     => $businessId,
                 'type'    => $type,
                 'success' => $success,
                 'message' => $message,
             ]);
         } catch (\Exception $e) {
             $this->context->getLog()->error(
-                "Failed to log token refresh attempt for business_id={$businessId}: " . $e->getMessage()
+                "Failed to log token refresh attempt for tenant={$businessId}: " . $e->getMessage()
             );
         }
     }

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Core\Context;
 use App\Services\Support\FetchResponseLogger;
 use App\Services\Support\PoyntDataFormatter as Format;
+use App\Services\Support\TableNamer;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -13,6 +14,7 @@ class BusinessService {
     private Context $context;
     private ClientInterface $httpClient;
     private ?string $businessId = null;
+    private TableNamer $tableNamer;
 
     const POYNT_ENDPOINT_API_BUSINESS = 'https://services.poynt.net/businesses';
 
@@ -20,6 +22,7 @@ class BusinessService {
     {
         $this->context = $context;
         $this->httpClient = $httpClient ?? $context->getHttpClient();
+        $this->tableNamer = new TableNamer($context->getConn());
         if ($businessId !== null) {
             $this->businessId = $businessId;
         }
@@ -316,11 +319,13 @@ class BusinessService {
             return true;
         }
 
+        $storeTable = $this->tableNamer->for($this->businessId, 'store');
+
         $sql = <<<SQL
-        INSERT INTO store
-            (store_id, business_id, name, metadata, created_at, updated_at)
+        INSERT INTO {$storeTable}
+            (store_id, name, metadata, created_at, updated_at)
         VALUES
-            (:storeId, :businessId, :name, :metadata, :createdAt, :updatedAt)
+            (:storeId, :name, :metadata, :createdAt, :updatedAt)
         ON CONFLICT (store_id) DO UPDATE SET
             name       = EXCLUDED.name,
             metadata   = EXCLUDED.metadata,
@@ -333,25 +338,21 @@ class BusinessService {
             $now = (new \DateTime('now'))->format('Y-m-d H:i:sP');
 
             foreach ($stores as $store) {
-                if (
-                    !isset($store['id'], $store['businessId'], $store['displayName'])
-                ) {
+                if (!isset($store['id'], $store['displayName'])) {
                     $this->context->getLog()->error(
                         'BusinessService::insertStores: missing required store fields '
-                        . '(id, businessId, or displayName)'
+                        . '(id or displayName)'
                     );
                     return false;
                 }
 
                 $storeId    = $store['id'];
-                $businessId = $store['businessId'];
                 $name       = $store['displayName'];
 
                 $metadata = Format::jsonObject($store);
 
                 $stmt->executeStatement([
                     'storeId'    => $storeId,
-                    'businessId' => $businessId,
                     'name'       => $name,
                     'metadata'   => $metadata,
                     'createdAt'  => $now,
