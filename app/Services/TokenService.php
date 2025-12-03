@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Core\Context;
+use App\Services\Support\TableNamer;
 use DateInterval;
 use DateTime;
 use Throwable;
@@ -18,9 +19,12 @@ class TokenService {
 
     private Context $context;
 
+    private TableNamer $tableNamer;
+
     public function __construct(Context $context)
     {
         $this->context = $context;
+        $this->tableNamer = new TableNamer($context->getConn());
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
@@ -49,8 +53,9 @@ class TokenService {
             $token['expiresIn'] = $expiresAt;
         }
 
+        $appTokenTable = $this->tableNamer->for($businessId, 'app_token');
         $sql = <<<SQL
-        INSERT INTO app_token
+        INSERT INTO {$appTokenTable}
             (business_id, access_token, refresh_token, expires_at)
         VALUES (:biz, :access, :refresh, :exp)
         ON CONFLICT (business_id) DO UPDATE SET
@@ -88,9 +93,10 @@ class TokenService {
     {
         $this->resetFailedTransactionIfNeeded();
 
+        $appTokenTable = $this->tableNamer->for($businessId, 'app_token');
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
-          FROM app_token
+          FROM {$appTokenTable}
          WHERE business_id = :biz
          LIMIT 1
         SQL;
@@ -128,9 +134,10 @@ class TokenService {
         // Safely interpolate $minutes into the INTERVAL clause
         $intervalSql = "NOW() + INTERVAL '{$minutes} minutes'";
 
+        $appTokenTable = $this->tableNamer->for(null, 'app_token');
         $sql = <<<SQL
         SELECT business_id, access_token, refresh_token, expires_at
-          FROM app_token
+          FROM {$appTokenTable}
          WHERE expires_at <= {$intervalSql}
         SQL;
 
@@ -170,8 +177,9 @@ class TokenService {
             $token['expiresIn'] = $expiresAt;
         }
 
+        $merchantTokenTable = $this->tableNamer->for($businessId, 'merchant_token');
         $sql = <<<SQL
-        INSERT INTO merchant_token
+        INSERT INTO {$merchantTokenTable}
             (business_id, access_token, refresh_token, expires_at)
         VALUES (:biz, :access, :refresh, :exp)
         ON CONFLICT (business_id) DO UPDATE SET
@@ -209,9 +217,10 @@ class TokenService {
     {
         $this->resetFailedTransactionIfNeeded();
 
+        $merchantTokenTable = $this->tableNamer->for($businessId, 'merchant_token');
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
-          FROM merchant_token
+          FROM {$merchantTokenTable}
          WHERE business_id = :biz
          LIMIT 1
         SQL;
@@ -248,9 +257,10 @@ class TokenService {
 
         $intervalSql = "NOW() + INTERVAL '{$minutes} minutes'";
 
+        $merchantTokenTable = $this->tableNamer->for(null, 'merchant_token');
         $sql = <<<SQL
         SELECT business_id, access_token, refresh_token, expires_at
-          FROM merchant_token
+          FROM {$merchantTokenTable}
          WHERE expires_at <= {$intervalSql}
         SQL;
 
@@ -304,8 +314,9 @@ class TokenService {
     {
         $this->resetFailedTransactionIfNeeded();
 
+        $refreshLogTable = $this->tableNamer->for($businessId, 'token_refresh_log');
         $sql = <<<SQL
-        INSERT INTO token_refresh_log (business_id, token_type, attempted_at, success, message)
+        INSERT INTO {$refreshLogTable} (business_id, token_type, attempted_at, success, message)
         VALUES (:biz, :type, NOW(), :success, :message)
         SQL;
 
