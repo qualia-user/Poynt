@@ -22,3 +22,13 @@ To remove a tenant's tables and clear the schema version entry, call `drop` with
 ```php
 $provisioner->drop('demo_tenant');
 ```
+
+## Callback onboarding storage preparation
+The OAuth callback flow now provisions and validates tenant storage before running the onboarding workflow. The callback service:
+
+- Resolves the platform handler and exchanges tokens, then normalizes optional `planId`/`planName` inputs. 【F:app/Services/CallbackService.php†L35-L73】【F:app/Services/CallbackService.php†L75-L95】
+- Syncs the business record through the platform service and provisions per-tenant tables via `TenantProvisioningService::provisionTenant` before continuing. 【F:app/Services/CallbackService.php†L97-L129】
+- Runs the transactional onboarding workflow: reactivates existing installations or starts a trial, synchronizes stores and subscriptions (with optional plan lookup), and gathers initial resources. Rollbacks occur on failure and the installation is purged when necessary. 【F:app/Services/CallbackService.php†L137-L233】【F:app/Services/CallbackService.php†L315-L428】
+
+## Business-scoped table templates
+`SQL/poynt-business-templates.sql` defines the per-business schema templates that are materialized for each tenant. Each statement uses a `_template` suffix that is replaced with the tenant-specific table name during provisioning. The file includes templates for core entities (stores, tokens, subscriptions, webhooks, logs), customer/user records, products/inventory, catalog configuration, payment artifacts, and loyalty structures. 【F:SQL/poynt-business-templates.sql†L1-L160】【F:SQL/poynt-business-templates.sql†L161-L320】
