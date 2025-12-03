@@ -26,8 +26,17 @@ class TenantProvisioningService
      */
     public function provisionTenant(string $businessId, array $templates = []): array
     {
-        $tenantId = trim($businessId);
-        $templates = $this->normalizeTemplates($templates);
+        $tenantId = strtolower(trim($businessId));
+
+        try {
+            $templates = $this->normalizeTemplates($templates);
+        } catch (\Throwable $exception) {
+            return [
+                'success' => false,
+                'status' => 'failed',
+                'message' => $exception->getMessage(),
+            ];
+        }
 
         if ($tenantId === '') {
             return [
@@ -72,12 +81,12 @@ class TenantProvisioningService
     private function normalizeTemplates(array $templates): array
     {
         $normalized = array_values(array_unique(array_filter(array_map(
-            static fn (string $template): string => trim($template),
+            static fn (string $template): string => strtolower(trim($template)),
             array_map('strval', $templates)
         ), static fn (string $template): bool => $template !== '')));
 
         if ($normalized === []) {
-            return Provisioner::getTemplateBaseNames();
+            return $this->provisioner->getTemplateBaseNames();
         }
 
         return $normalized;

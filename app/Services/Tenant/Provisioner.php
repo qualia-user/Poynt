@@ -4,52 +4,52 @@ namespace App\Services\Tenant;
 
 use App\Core\Context;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\ParameterType;
 
 class Provisioner
 {
     private const TEMPLATE_VERSION = 2025120201;
 
     /**
-     * List of base table names defined in the tenant DDL template.
+     * Order used when tearing down tenant tables to satisfy foreign key dependencies.
      *
      * @var string[]
      */
-    private const TABLE_BASE_NAMES = [
-        'store',
-        'terminal',
-        'app_token',
-        'merchant_token',
-        'subscription',
-        'webhook_audit',
-        'log',
-        'token_refresh_log',
-        'customer',
-        'business_user',
-        'product',
-        'product_variant',
-        'inventory_summary',
-        'inventory',
-        'variant_inventory',
-        'catalog',
-        'catalog_product',
-        'catalog_product_tax',
-        'catalog_available_discount',
-        'category',
-        'category_product',
-        'category_tax',
-        'tax',
-        'paylink',
-        'paylink_item',
-        'paylink_payment',
-        'paylink_link',
-        'hook',
-        'hook_delivery',
-        'order',
-        'order_item',
-        'order_history',
-        'order_shipment',
-        'transaction',
+    private const DROP_ORDER = [
         'transaction_receipt',
+        'transaction',
+        'order_shipment',
+        'order_history',
+        'order_item',
+        'order',
+        'hook_delivery',
+        'hook',
+        'paylink_link',
+        'paylink_payment',
+        'paylink_item',
+        'paylink',
+        'category_tax',
+        'category_product',
+        'category',
+        'catalog_available_discount',
+        'catalog_product_tax',
+        'catalog_product',
+        'catalog',
+        'variant_inventory',
+        'inventory',
+        'inventory_summary',
+        'product_variant',
+        'product',
+        'business_user',
+        'customer',
+        'token_refresh_log',
+        'log',
+        'webhook_audit',
+        'subscription',
+        'merchant_token',
+        'app_token',
+        'terminal',
+        'store',
     ];
 
     private Context $context;
@@ -57,6 +57,11 @@ class Provisioner
     private Connection $conn;
 
     private string $templatePath;
+
+    /**
+     * @var string[]|null
+     */
+    private ?array $templateBaseNames = null;
 
     public function __construct(Context $context, ?string $templatePath = null)
     {
@@ -71,14 +76,9 @@ class Provisioner
      *
      * @return array{success: bool, templateVersion?: int, registeredTables?: string[], error?: string}
      */
-    public function provision(string $businessId, array $tableBaseNames = self::TABLE_BASE_NAMES): array
+    public function provision(string $businessId, array $tableBaseNames = []): array
     {
-        $tenantId = trim($businessId);
-        $tableBaseNames = $this->normalizeTableBaseNames($tableBaseNames);
-
-        if ($tableBaseNames === []) {
-            $tableBaseNames = self::TABLE_BASE_NAMES;
-        }
+        $tenantId = $this->normalizeTenantId($businessId);
 
         if ($tenantId === '') {
             $this->context->getLog()->error('Provisioner::provision: missing business id');
@@ -90,31 +90,30 @@ class Provisioner
         }
 
         try {
-            if ($this->tenantAlreadyProvisioned($tenantId)) {
-                $this->context->getLog()->info(
-                    'Provisioner::provision: tenant already provisioned, skipping',
-                    [
-                        'businessId' => $tenantId,
-                        'templateVersion' => self::TEMPLATE_VERSION,
-                    ]
-                );
+            $tableBaseNames = $this->resolveRequestedBaseNames($tableBaseNames);
+        } catch (\Throwable $exception) {
+            $this->context->getLog()->error($exception->getMessage());
 
-                return [
-                    'success' => true,
-                    'templateVersion' => self::TEMPLATE_VERSION,
-                    'registeredTables' => $tableBaseNames,
-                ];
-            }
+            return [
+                'success' => false,
+                'error' => $exception->getMessage(),
+            ];
+        }
 
-            $statements = $this->renderStatements($tenantId);
+        try {
+            $statements = $this->renderStatements($tenantId, $tableBaseNames);
 
             $this->conn->beginTransaction();
+
+            $this->acquireTenantLock($tenantId);
 
             foreach ($statements as $statement) {
                 $this->conn->executeStatement($statement);
             }
 
             $this->registerTenantTables($tenantId, $tableBaseNames);
+
+            $this->upsertTenantSchemaVersion($tenantId);
 
             $this->conn->commit();
 
@@ -157,23 +156,93 @@ class Provisioner
     /**
      * @return string[]
      */
-    public static function getTemplateBaseNames(): array
+    public function getTemplateBaseNames(): array
     {
-        return self::TABLE_BASE_NAMES;
+        if ($this->templateBaseNames !== null) {
+            return $this->templateBaseNames;
+        }
+
+        $templateSql = $this->loadTemplateSql();
+
+        preg_match_all('/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([A-Za-z0-9_]+)_template/i', $templateSql, $matches);
+
+        $baseNames = array_map('strtolower', $matches[1] ?? []);
+
+        $this->templateBaseNames = array_values(array_unique($baseNames));
+
+        return $this->templateBaseNames;
     }
 
-    private function tenantAlreadyProvisioned(string $businessId): bool
+    /**
+     * @return array{success: bool, templateVersion?: int, error?: string}
+     */
+    public function drop(string $businessId): array
     {
-        $existing = $this->conn->fetchOne(
-            'SELECT 1 FROM tenant_table_registry WHERE business_id = ? LIMIT 1',
-            [$businessId]
-        );
+        $tenantId = $this->normalizeTenantId($businessId);
 
-        return $existing !== false;
+        if ($tenantId === '') {
+            $this->context->getLog()->error('Provisioner::drop: missing business id');
+
+            return [
+                'success' => false,
+                'error' => 'Missing business id',
+            ];
+        }
+
+        try {
+            $this->conn->beginTransaction();
+            $this->acquireTenantLock($tenantId);
+
+            foreach (self::DROP_ORDER as $baseName) {
+                $this->conn->executeStatement(
+                    sprintf('DROP TABLE IF EXISTS public.%s_%s CASCADE', $tenantId, $baseName)
+                );
+            }
+
+            $this->conn->executeStatement(
+                'DELETE FROM tenant_schema_version WHERE tenant_id = ?',
+                [$tenantId],
+                [ParameterType::STRING]
+            );
+
+            $this->conn->commit();
+
+            $this->context->getLog()->info(
+                'Provisioner::drop: tenant tables dropped',
+                [
+                    'businessId' => $tenantId,
+                    'templateVersion' => self::TEMPLATE_VERSION,
+                ]
+            );
+
+            return [
+                'success' => true,
+                'templateVersion' => self::TEMPLATE_VERSION,
+            ];
+        } catch (\Throwable $exception) {
+            if ($this->conn->isTransactionActive()) {
+                $this->conn->rollBack();
+            }
+
+            $message = sprintf(
+                'Provisioner::drop: failed to drop tenant %s: %s',
+                $tenantId,
+                $exception->getMessage()
+            );
+
+            $this->context->getLog()->error($message);
+
+            return [
+                'success' => false,
+                'error' => $message,
+            ];
+        }
     }
 
     private function registerTenantTables(string $businessId, array $tableBaseNames): void
     {
+        $this->conn->executeStatement('DELETE FROM tenant_table_registry WHERE business_id = ?', [$businessId]);
+
         foreach ($tableBaseNames as $baseName) {
             $this->conn->insert('tenant_table_registry', [
                 'business_id' => $businessId,
@@ -191,7 +260,7 @@ class Provisioner
     private function normalizeTableBaseNames(array $tableBaseNames): array
     {
         $normalized = array_values(array_unique(array_filter(array_map(
-            static fn (string $name): string => trim($name),
+            static fn (string $name): string => strtolower(trim($name)),
             array_map('strval', $tableBaseNames)
         ), static fn (string $name): bool => $name !== '')));
 
@@ -201,19 +270,21 @@ class Provisioner
     /**
      * @return string[]
      */
-    private function renderStatements(string $businessId): array
+    private function renderStatements(string $businessId, array $tableBaseNames): array
     {
         $templateSql = $this->loadTemplateSql();
-        $sqlWithPlaceholder = str_replace('_template', '{{business_id}}_', $templateSql);
-        $renderedSql = str_replace('{{business_id}}', $businessId, $sqlWithPlaceholder);
-        $renderedSql = preg_replace('/^--.*$/m', '', $renderedSql);
+        $templateStatements = $this->extractTemplateStatements($templateSql, $tableBaseNames);
 
-        $statements = array_filter(
-            array_map('trim', explode(';', (string) $renderedSql)),
-            static fn (string $statement) => $statement !== ''
+        $renderedStatements = array_map(
+            static fn (string $statement): string => (string) preg_replace(
+                '/([A-Za-z0-9_]+)_template/',
+                sprintf('%s_\1', $businessId),
+                $statement
+            ),
+            $templateStatements
         );
 
-        return $statements;
+        return $renderedStatements;
     }
 
     private function loadTemplateSql(): string
@@ -235,9 +306,81 @@ class Provisioner
         return $contents;
     }
 
+    private function extractTemplateStatements(string $templateSql, array $requestedBaseNames): array
+    {
+        $withoutComments = preg_replace('/^--.*$/m', '', $templateSql);
+        $withoutComments = preg_replace('#/\*.*?\*/#s', '', (string) $withoutComments);
+
+        $statements = array_filter(
+            array_map('trim', explode(';', (string) $withoutComments)),
+            static fn (string $statement): bool => $statement !== '' && stripos($statement, '_template') !== false
+        );
+
+        if ($requestedBaseNames === []) {
+            return $statements;
+        }
+
+        return array_values(array_filter(
+            $statements,
+            static function (string $statement) use ($requestedBaseNames): bool {
+                foreach ($requestedBaseNames as $baseName) {
+                    if (stripos($statement, sprintf('%s_template', $baseName)) !== false) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        ));
+    }
+
     private function tableName(string $businessId, string $baseName): string
     {
         return sprintf('%s_%s', $businessId, $baseName);
+    }
+
+    private function normalizeTenantId(string $businessId): string
+    {
+        return strtolower(trim($businessId));
+    }
+
+    private function resolveRequestedBaseNames(array $tableBaseNames): array
+    {
+        $normalized = $this->normalizeTableBaseNames($tableBaseNames);
+        $available = $this->getTemplateBaseNames();
+
+        if ($normalized === []) {
+            return $available;
+        }
+
+        $unknown = array_diff($normalized, $available);
+
+        if ($unknown !== []) {
+            throw new \InvalidArgumentException(
+                sprintf('Unknown template base names requested: %s', implode(', ', $unknown))
+            );
+        }
+
+        return $normalized;
+    }
+
+    private function acquireTenantLock(string $tenantId): void
+    {
+        $this->conn->executeStatement(
+            'SELECT pg_advisory_xact_lock(hashtext(?))',
+            [sprintf('provision_tenant_schema_%s', $tenantId)],
+            [ParameterType::STRING]
+        );
+    }
+
+    private function upsertTenantSchemaVersion(string $tenantId): void
+    {
+        $this->conn->executeStatement(
+            'INSERT INTO tenant_schema_version (tenant_id, version, applied_at) VALUES (?, ?, NOW())
+                ON CONFLICT (tenant_id) DO UPDATE SET version = EXCLUDED.version, applied_at = EXCLUDED.applied_at',
+            [$tenantId, self::TEMPLATE_VERSION],
+            [ParameterType::STRING, ParameterType::INTEGER]
+        );
     }
 
     private function getDefaultTemplatePath(): string
