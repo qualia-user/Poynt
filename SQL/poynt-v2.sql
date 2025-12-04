@@ -14,7 +14,8 @@ CREATE TABLE business (
   metadata    JSONB        NOT NULL DEFAULT '{}',
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  active      BOOLEAN      NOT NULL DEFAULT FALSE
+  active      BOOLEAN      NOT NULL DEFAULT FALSE,
+  initial_gathering BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- Source (GET): preko Business payload-a (stores[] unutar businessa):

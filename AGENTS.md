@@ -29,6 +29,23 @@
 - Ensure database writes use prepared statements/parameter binding through Doctrine's connection, mirroring patterns in existing services.
 - SQL directory is used for SQL client, there should be only initial SQL definitions(not alter definitions, only last definition version). 'database' directory can contain all migrations we had during development. Migrations shouldn't be script, but plain SQL definition.
 
+## Domain entities and relationships
+- Business → has multiple Stores (locations). Each Store has one or more Terminals, and only one Catalog can be assigned to a Terminal at any given time (swap as needed).
+- Catalog → acts as a bundle of settings for Products, Categories, Taxes, Discounts, and Fees. These can be linked at the order level or the item level. A Catalog assigned to a Store/Terminal determines what is sellable and which rates/discounts apply.
+- Category ↔ Product (M:N) → Products can belong to multiple Categories; Categories live inside a Catalog and support organization and item-level rules (e.g., discount only for "Drinks").
+- Product → Core entity (sku, name, type, etc.). In Poynt, Products belong to the "Products" domain alongside pricing, Catalogs, and Taxes.
+- Taxes / Discounts / Fees → Defined within a Catalog and/or Category and applied at the order level or item level, meaning they are semantically attached to the Catalog (and indirectly to the Store/Terminal where the Catalog is assigned).
+- Catalog ↔ Store/Terminal (Assignment) → Operational link that determines which Catalog is active on a Store/Terminal at a given time (typically one active per Terminal).
+- Inventory (optional but recommended) → Standard POS pattern ties stock to Product and Store/Location (e.g., available_qty per Store). If adding inventory, link it to (product_id, store_id) to track stock by sales location (similar to Shopify's InventoryItem/Level per location pattern).
+
+### Compact reference
+- Business → Stores → Terminals → assigned Catalog
+- Catalog → {Categories, Products, Taxes, Discounts, Fees}
+- Product ↔ Category (M:N)
+- (Optional) InventoryLevel: Product × Store
+- Price/Overrides can live on Product or on the Catalog–Product relationship (preferred on the relationship since the Catalog carries the price list).
+- SQL directory is used for SQL client, there should be only initial SQL definitions(not alter definitions, only last definition version). 'database' directory can contain all migrations we had during development. Migrations shouldn't be script, but plain SQL definition.
+
 ## Hooks reference
 - Fetch hooks for application subscriptions via `https://services.poynt.net/hooks?businessId={ORGANIZATION_ID}`.
 - Fetch all other hooks via `https://services.poynt.net/hooks?businessId={BUSINESS_ID}`.

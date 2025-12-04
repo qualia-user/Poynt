@@ -1,7 +1,57 @@
++62-3
 # Poynt Service
+# Poynt Integration Service
+
+A lightweight PHP 8.2 service for managing OAuth flows, subscriptions, tenant provisioning, and webhook handling for Poynt-integrated businesses. The application is organized around a shared `Context` object that provides database access, logging, HTTP clients, and configuration needed by controllers and services.
+
+## Architecture
+- **Entry point**: `public/index.php` bootstraps configuration, opens PostgreSQL connections, wires Monolog logging, and dispatches requests through the Phroute router using dependency injection via `league/container`.
+- **Routing**: Routes are defined in `App\Core\Api::loadRouteData()` and mapped to controllers. The router supports OAuth callbacks, webhook listeners, subscription management, tenant provisioning, and internal maintenance endpoints.
+- **Modules & services**:
+    - `app/Modules/OAuth` contains platform-specific OAuth handlers (e.g., Poynt, Clover) registered through `PlatformRegistry`.
+    - `app/Services` contains domain services for subscriptions, webhooks, orders, customers, products, background jobs, and tenant provisioning helpers.
+    - Shared utilities live in `app/Services/Support` (logging helpers, data formatters, etc.).
+- **Views**: Minimal PHP views under `app/Views` support diagnostic pages such as the sanity check.
+
+## Configuration
+Configuration files are loaded from `public/bootstrap.php` and are expected to live under a `config/` directory adjacent to `public/`:
+- `ConfigApp.php` should expose static properties such as `$environment`, `$timezone`, `$orgId`, `$appId`, `$platform`, `$webRootUrl`, and `$location` (for platform-specific settings).
+- `ConfigDatabase.php` should define PostgreSQL connection settings: `$host`, `$port`, `$database`, `$username`, `$password`, and `$charset`.
+- `ConfigClover.php` should provide Clover client credentials keyed by environment and location.
+- `config.php` can contain any additional bootstrap configuration required by your deployment.
+
+Create these files before running the service. Do **not** commit real secrets; store environment-specific values outside version control.
+
+## Installation
+1. Install PHP 8.2 and Composer.
+2. Install dependencies:
+   ```bash
+   composer install
+   ```
+3. Create the configuration files listed above with values for your environment.
+
+## Running the service locally
+Use PHP's built-in server to serve the `public/` directory:
+```bash
+php -S 0.0.0.0:8000 -t public
+```
+Routes are resolved from the `request` query parameter. For example, hit the sanity check endpoint at `http://localhost:8000/index.php?request=/sanity-check`.
+
+## API routes
+The router currently exposes:
+- `GET /install` – installation placeholder.
+- `GET /callback` – OAuth callback handler.
+- `POST /webhooks/event-listener` – webhook receiver.
+- `GET /webhooks/delete-webhook/{businessId}` – remove webhooks for a business.
+- `POST /internal/refresh-tokens` – refresh expiring tokens.
+- `GET /subscriptions/status` – check subscription status.
+- `POST /subscriptions/start-trial` – start a trial subscription.
+- `GET /sanity-check` – diagnostic view.
+- `POST /tenants/provision` – manually provision tenant schemas outside the OAuth flow.
 
 ## Tenant schema provisioning
 Tenant schemas are now managed directly in PHP via `App\Services\Tenant\Provisioner`. The service reads `SQL/poynt-tenant-templates.sql`, expands each `_template` table/index definition into `<tenant>_...` statements for the requested tenant, replays them through the Doctrine connection provided by `Context`, and upserts the current version into `tenant_schema_version`. Templates no longer carry `business_id` columns because every tenant receives its own physical tables; the only shared lookup record is the `business` row that registers a tenant. 【F:SQL/poynt-tenant-templates.sql†L1-L22】
+Tenant schemas are managed directly in PHP via `App\Services\Tenant\Provisioner`. The service reads `SQL/poynt-tenant-templates.sql`, expands each `_template` table/index definition into `<tenant>_...` statements for the requested tenant, replays them through the Doctrine connection provided by `Context`, and upserts the current version into `tenant_schema_version`. Templates no longer carry `business_id` columns because every tenant receives its own physical tables; the only shared lookup record is the `business` row that registers a tenant. 【F:SQL/poynt-tenant-templates.sql†L1-L22】
 
 ### Fresh database bootstrap and onboarding
 1. Apply `SQL/poynt-v4.sql` to create the shared registry tables (`business`, `tenant_schema_version`, `tenant_table_registry`). No business data tables are created by this script. 【F:SQL/poynt-v4.sql†L1-L32】
@@ -30,6 +80,7 @@ $provisioner->drop('demo_tenant');
 
 ## Callback onboarding storage preparation
 The OAuth callback flow now provisions and validates tenant storage before running the onboarding workflow. The callback service:
+The OAuth callback flow provisions and validates tenant storage before running the onboarding workflow. The callback service:
 
 - Resolves the platform handler and exchanges tokens, then normalizes optional `planId`/`planName` inputs. 【F:app/Services/CallbackService.php†L35-L73】【F:app/Services/CallbackService.php†L75-L95】
 - Syncs the business record through the platform service and provisions per-tenant tables via `TenantProvisioningService::provisionTenant` before continuing. 【F:app/Services/CallbackService.php†L97-L129】
@@ -37,3 +88,15 @@ The OAuth callback flow now provisions and validates tenant storage before runni
 
 ## Business-scoped table templates
 `SQL/poynt-business-templates.sql` defines the per-business schema templates that are materialized for each tenant. Each statement uses a `_template` suffix that is replaced with the tenant-specific table name during provisioning. The file includes templates for core entities (stores, tokens, subscriptions, webhooks, logs), customer/user records, products/inventory, catalog configuration, payment artifacts, and loyalty structures. 【F:SQL/poynt-business-templates.sql†L1-L160】【F:SQL/poynt-business-templates.sql†L161-L320】
+
+## Maintenance scripts
+- `scripts/purge_business.php` removes local records for a business (and optionally drops stored tokens). Usage:
+  ```bash
+  php scripts/purge_business.php --business=<BUSINESS_ID> [--drop-tokens]
+  ```
+
+## Testing
+Run the PHPUnit suite after installing dependencies:
+```bash
+./vendor/bin/phpunit
+```
