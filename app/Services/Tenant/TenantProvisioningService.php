@@ -3,6 +3,7 @@
 namespace App\Services\Tenant;
 
 use App\Core\Context;
+use Throwable;
 
 class TenantProvisioningService
 {
@@ -38,6 +39,14 @@ class TenantProvisioningService
             ];
         }
 
+        if (!$this->ensureCoreSchemaExists()) {
+            return [
+                'success' => false,
+                'status' => 'failed',
+                'message' => 'Failed to prepare core schema for tenant provisioning',
+            ];
+        }
+
         if ($tenantId === '') {
             return [
                 'success' => false,
@@ -63,6 +72,62 @@ class TenantProvisioningService
         }
 
         return $response;
+    }
+
+    private function ensureCoreSchemaExists(): bool
+    {
+        $conn = $this->context->getConn();
+
+        $tableExists = $conn->fetchOne("SELECT to_regclass('public.merchant_token')");
+        if ($tableExists !== null) {
+            return true;
+        }
+
+        $migrationPath = dirname(__DIR__, 3) . '/database/migrations/20241010000000_create_core_entities.sql';
+
+        if (!is_file($migrationPath)) {
+            $this->context->getLog()->error(
+                sprintf('TenantProvisioningService::ensureCoreSchemaExists missing migration file at %s', $migrationPath)
+            );
+
+            return false;
+        }
+
+        $contents = file_get_contents($migrationPath);
+
+        if ($contents === false) {
+            $this->context->getLog()->error(
+                sprintf('TenantProvisioningService::ensureCoreSchemaExists unable to read migration file at %s', $migrationPath)
+            );
+
+            return false;
+        }
+
+        $statements = array_filter(array_map('trim', explode(';', $contents))); // @codeCoverageIgnore
+
+        try {
+            foreach ($statements as $statement) {
+                if ($statement === '') {
+                    continue;
+                }
+
+                $conn->executeStatement($statement);
+            }
+
+            $this->context->getLog()->info(
+                'TenantProvisioningService::ensureCoreSchemaExists applied baseline core schema',
+                ['migrationPath' => $migrationPath]
+            );
+
+            return true;
+        } catch (Throwable $exception) {
+            $this->context->getLog()->error(
+                'TenantProvisioningService::ensureCoreSchemaExists failed: ' . $exception->getMessage(),
+                ['exception' => $exception]
+            );
+
+            return false;
+        }
     }
 
     /**
