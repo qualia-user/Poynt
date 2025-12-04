@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Services\Support\PoyntDataFormatter as Format;
+use App\Services\Support\TableNamer;
 use Doctrine\DBAL\Connection;
 use Monolog\Handler\AbstractProcessingHandler;
 use Monolog\Logger;
@@ -18,12 +19,14 @@ class CustomPDOHandler extends AbstractProcessingHandler
 {
     private Connection $primaryConn;
     private ?Connection $logConn;
+    private TableNamer $tableNamer;
 
     public function __construct(Connection $primaryConn, ?Connection $logConn = null, $level = Logger::DEBUG, bool $bubble = true)
     {
         parent::__construct($level, $bubble);
         $this->primaryConn = $primaryConn;
         $this->logConn = $logConn;
+        $this->tableNamer = new TableNamer($logConn ?? $primaryConn);
 
         if ($this->logConn !== null && method_exists($this->logConn, 'setAutoCommit')) {
             $this->logConn->setAutoCommit(true);
@@ -38,7 +41,9 @@ class CustomPDOHandler extends AbstractProcessingHandler
             $connection->connect();
         }
 
-        $sql = "INSERT INTO log (request_id, type, level, channel, message, merchant, url, details)"
+        $tableName = $this->tableNamer->for($this->resolveBusinessId($record), 'log');
+
+        $sql = "INSERT INTO {$tableName} (request_id, type, level, channel, message, merchant, url, details)"
             . " VALUES (:request_id, :type, :level, :channel, :message, :merchant, :url, :details)";
 
         $requestId = $record['context']['request_id'] ?? Uuid::uuid4()->toString();
@@ -53,5 +58,18 @@ class CustomPDOHandler extends AbstractProcessingHandler
             'url' => $record['context']['url'] ?? null,
             'details' => Format::jsonObject($record['context']['details'] ?? []),
         ]);
+    }
+
+    private function resolveBusinessId(array $record): ?string
+    {
+        $context = $record['context'] ?? [];
+
+        foreach (['businessId', 'business_id', 'merchant'] as $key) {
+            if (isset($context[$key]) && is_string($context[$key]) && $context[$key] !== '') {
+                return $context[$key];
+            }
+        }
+
+        return null;
     }
 }
