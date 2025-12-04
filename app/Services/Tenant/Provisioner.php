@@ -282,20 +282,24 @@ class Provisioner
         $templateSql = $this->loadTemplateSql();
         $templateStatements = $this->extractTemplateStatements($templateSql, $tableBaseNames);
 
-        $renderedStatements = array_map(
-            function (string $statement) use ($businessId): string {
-                return (string) preg_replace_callback(
-                    '/([A-Za-z0-9_]+)_template/',
-                    function (array $matches) use ($businessId): string {
-                        return $this->quoteIdentifier(sprintf('%s_%s', $businessId, $matches[1]));
-                    },
-                    $statement
-                );
-            },
-            $templateStatements
-        );
+        $renderedStatements = [];
+
+        foreach ($templateStatements as $statement) {
+            $renderedStatements[] = $this->replaceTemplateIdentifiers($statement, $businessId);
+        }
 
         return $renderedStatements;
+    }
+
+    private function replaceTemplateIdentifiers(string $statement, string $businessId): string
+    {
+        return (string) preg_replace_callback(
+            '/([A-Za-z0-9_]+)_template([A-Za-z0-9_]*)/',
+            function (array $matches) use ($businessId): string {
+                return $this->quoteIdentifier(sprintf('%s_%s%s', $businessId, $matches[1], $matches[2]));
+            },
+            $statement
+        );
     }
 
     private function loadTemplateSql(): string

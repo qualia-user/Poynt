@@ -121,6 +121,28 @@ class ProvisionerTest extends TestCase
         self::assertStringContainsString('DELETE FROM tenant_schema_version', end($statements));
     }
 
+    public function testProvisionRendersIdentifierSuffixes(): void
+    {
+        $templatePath = $this->createTemplateFile(<<<SQL
+            CREATE TABLE IF NOT EXISTS app_token_template (id INT, expires_at TIMESTAMP);
+            CREATE INDEX idx_app_token_template_expires_at ON app_token_template (expires_at);
+            SQL
+        );
+
+        $statements = [];
+        [$context] = $this->buildContextWithConnection($statements);
+
+        $provisioner = new Provisioner($context, $templatePath);
+        $result = $provisioner->provision('DemoTenant', ['app_token']);
+
+        self::assertTrue($result['success']);
+
+        self::assertContains(
+            'CREATE INDEX "demotenant_idx_app_token_expires_at" ON "demotenant_app_token" (expires_at)',
+            $statements
+        );
+    }
+
     /**
      * @param array<int, string> $statements
      * @param array<int, array<string, mixed>> $registryInserts
