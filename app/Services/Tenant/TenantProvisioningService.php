@@ -74,6 +74,23 @@ class TenantProvisioningService
         return $response;
     }
 
+    /**
+     * @return array{success: bool, templateVersion?: int, error?: string}
+     */
+    public function dropTenant(string $businessId): array
+    {
+        $tenantId = strtolower(trim($businessId));
+
+        if ($tenantId === '') {
+            return [
+                'success' => false,
+                'error' => 'Missing tenant identifier',
+            ];
+        }
+
+        return $this->provisioner->drop($tenantId);
+    }
+
     private function ensureCoreSchemaExists(): bool
     {
         $conn = $this->context->getConn();
