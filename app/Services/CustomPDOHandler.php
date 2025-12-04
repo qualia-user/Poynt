@@ -21,6 +21,11 @@ class CustomPDOHandler extends AbstractProcessingHandler
     private ?Connection $logConn;
     private TableNamer $tableNamer;
 
+    /**
+     * @var array<string, bool>
+     */
+    private array $ensuredTables = [];
+
     public function __construct(Connection $primaryConn, ?Connection $logConn = null, $level = Logger::DEBUG, bool $bubble = true)
     {
         parent::__construct($level, $bubble);
@@ -42,6 +47,8 @@ class CustomPDOHandler extends AbstractProcessingHandler
         }
 
         $tableName = $this->tableNamer->for($this->resolveBusinessId($record), 'log');
+
+        $this->ensureLogTableExists($connection, $tableName);
 
         $sql = "INSERT INTO {$tableName} (request_id, type, level, channel, message, merchant, url, details)"
             . " VALUES (:request_id, :type, :level, :channel, :message, :merchant, :url, :details)";
@@ -71,5 +78,38 @@ class CustomPDOHandler extends AbstractProcessingHandler
         }
 
         return null;
+    }
+
+    private function ensureLogTableExists(Connection $connection, string $tableName): void
+    {
+        if (isset($this->ensuredTables[$tableName])) {
+            return;
+        }
+
+        $sanitizedBaseName = preg_replace('/[^a-z0-9_]+/i', '_', trim($tableName, '"'));
+
+        $connection->executeStatement(
+            "CREATE TABLE IF NOT EXISTS {$tableName} (
+                id SERIAL PRIMARY KEY,
+                request_id UUID NOT NULL,
+                type TEXT,
+                timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                level SMALLINT,
+                channel VARCHAR(64),
+                message TEXT,
+                merchant VARCHAR(64),
+                url TEXT,
+                details JSONB NOT NULL DEFAULT '{}'::JSONB
+            )"
+        );
+
+        $connection->executeStatement("CREATE INDEX IF NOT EXISTS idx_{$sanitizedBaseName}_request_id ON {$tableName} (request_id)");
+        $connection->executeStatement("CREATE INDEX IF NOT EXISTS idx_{$sanitizedBaseName}_type ON {$tableName} (type)");
+        $connection->executeStatement("CREATE INDEX IF NOT EXISTS idx_{$sanitizedBaseName}_timestamp ON {$tableName} (timestamp)");
+        $connection->executeStatement("CREATE INDEX IF NOT EXISTS idx_{$sanitizedBaseName}_channel ON {$tableName} (channel)");
+        $connection->executeStatement("CREATE INDEX IF NOT EXISTS idx_{$sanitizedBaseName}_level ON {$tableName} (level)");
+        $connection->executeStatement("CREATE INDEX IF NOT EXISTS idx_{$sanitizedBaseName}_details_jsonb ON {$tableName} USING GIN (details)");
+
+        $this->ensuredTables[$tableName] = true;
     }
 }
