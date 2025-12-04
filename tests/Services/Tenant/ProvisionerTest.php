@@ -7,6 +7,7 @@ namespace Tests\Services\Tenant;
 use App\Core\Context;
 use App\Services\Tenant\Provisioner;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Monolog\Handler\NullHandler;
 use Monolog\Logger;
 use PHPUnit\Framework\TestCase;
@@ -68,9 +69,9 @@ class ProvisionerTest extends TestCase
         self::assertSame(
             [
                 'SELECT pg_advisory_xact_lock(hashtext(?))',
-                'CREATE TABLE IF NOT EXISTS demotenant_store (store_id INT)',
-                'CREATE INDEX idx_demotenant_store_id ON demotenant_store (store_id)',
-                'CREATE TABLE IF NOT EXISTS demotenant_terminal (terminal_id INT REFERENCES demotenant_store(store_id))',
+                'CREATE TABLE IF NOT EXISTS "demotenant_store" (store_id INT)',
+                'CREATE INDEX "demotenant_idx_store_id" ON "demotenant_store" (store_id)',
+                'CREATE TABLE IF NOT EXISTS "demotenant_terminal" (terminal_id INT REFERENCES "demotenant_store"(store_id))',
                 'DELETE FROM tenant_table_registry WHERE business_id = ?',
             ],
             array_slice($statements, 0, 5)
@@ -115,8 +116,8 @@ class ProvisionerTest extends TestCase
         self::assertSame(2025120201, $result['templateVersion']);
 
         self::assertSame('SELECT pg_advisory_xact_lock(hashtext(?))', $statements[0]);
-        self::assertStringStartsWith('DROP TABLE IF EXISTS public.demotenant_transaction_receipt', $statements[1]);
-        self::assertStringStartsWith('DROP TABLE IF EXISTS public.demotenant_store', $statements[count($statements) - 2]);
+        self::assertStringStartsWith('DROP TABLE IF EXISTS public."demotenant_transaction_receipt"', $statements[1]);
+        self::assertStringStartsWith('DROP TABLE IF EXISTS public."demotenant_store"', $statements[count($statements) - 2]);
         self::assertStringContainsString('DELETE FROM tenant_schema_version', end($statements));
     }
 
@@ -132,6 +133,7 @@ class ProvisionerTest extends TestCase
         $logger->pushHandler(new NullHandler());
 
         $connection = $this->createMock(Connection::class);
+        $connection->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
         $connection->method('beginTransaction')->willReturn(true);
         $connection->method('commit')->willReturn(true);
         $connection->method('rollBack')->willReturn(null);

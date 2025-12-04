@@ -4,10 +4,13 @@ namespace App\Services\Support;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\ParameterType;
+use Doctrine\DBAL\Platforms\AbstractPlatform;
 
 class TableNamer
 {
     private Connection $conn;
+
+    private AbstractPlatform $platform;
 
     private bool $tenantConnectionScoped;
 
@@ -19,6 +22,7 @@ class TableNamer
     public function __construct(Connection $conn, ?bool $tenantConnectionScoped = null)
     {
         $this->conn = $conn;
+        $this->platform = $conn->getDatabasePlatform();
         $this->tenantConnectionScoped = $tenantConnectionScoped ?? $this->resolveTenantConnectionScope();
     }
 
@@ -31,7 +35,7 @@ class TableNamer
         }
 
         if ($this->tenantConnectionScoped || $businessId === null || $businessId === '') {
-            return $baseName;
+            return $this->quoteIdentifier($baseName);
         }
 
         $cacheKey = sprintf('%s:%s', $businessId, $baseName);
@@ -52,15 +56,16 @@ class TableNamer
             ]
         );
 
-        if (is_string($registered) && $registered !== '') {
-            $this->cache[$cacheKey] = $registered;
+        $resolvedName = $defaultName;
 
-            return $registered;
+        if (is_string($registered) && $registered !== '') {
+            $resolvedName = $registered;
         }
 
-        $this->cache[$cacheKey] = $defaultName;
+        $quotedName = $this->quoteIdentifier($resolvedName);
+        $this->cache[$cacheKey] = $quotedName;
 
-        return $defaultName;
+        return $quotedName;
     }
 
     private function resolveTenantConnectionScope(): bool
@@ -72,5 +77,10 @@ class TableNamer
         }
 
         return filter_var($flag, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function quoteIdentifier(string $identifier): string
+    {
+        return $this->platform->quoteIdentifier($identifier);
     }
 }

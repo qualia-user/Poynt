@@ -5,6 +5,7 @@ namespace App\Services\Tenant;
 use App\Core\Context;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\ParameterType;
+use Doctrine\DBAL\Platforms\AbstractPlatform;
 
 class Provisioner
 {
@@ -56,6 +57,8 @@ class Provisioner
 
     private Connection $conn;
 
+    private AbstractPlatform $platform;
+
     private string $templatePath;
 
     /**
@@ -67,6 +70,7 @@ class Provisioner
     {
         $this->context = $context;
         $this->conn = $context->getConn();
+        $this->platform = $this->conn->getDatabasePlatform();
         $this->templatePath = $templatePath ?? $this->getDefaultTemplatePath();
     }
 
@@ -195,7 +199,10 @@ class Provisioner
 
             foreach (self::DROP_ORDER as $baseName) {
                 $this->conn->executeStatement(
-                    sprintf('DROP TABLE IF EXISTS public.%s_%s CASCADE', $tenantId, $baseName)
+                    sprintf(
+                        'DROP TABLE IF EXISTS public.%s CASCADE',
+                        $this->quoteIdentifier(sprintf('%s_%s', $tenantId, $baseName))
+                    )
                 );
             }
 
@@ -276,11 +283,15 @@ class Provisioner
         $templateStatements = $this->extractTemplateStatements($templateSql, $tableBaseNames);
 
         $renderedStatements = array_map(
-            static fn (string $statement): string => (string) preg_replace(
-                '/([A-Za-z0-9_]+)_template/',
-                sprintf('%s_\1', $businessId),
-                $statement
-            ),
+            function (string $statement) use ($businessId): string {
+                return (string) preg_replace_callback(
+                    '/([A-Za-z0-9_]+)_template/',
+                    function (array $matches) use ($businessId): string {
+                        return $this->quoteIdentifier(sprintf('%s_%s', $businessId, $matches[1]));
+                    },
+                    $statement
+                );
+            },
             $templateStatements
         );
 
@@ -342,6 +353,11 @@ class Provisioner
     private function normalizeTenantId(string $businessId): string
     {
         return strtolower(trim($businessId));
+    }
+
+    private function quoteIdentifier(string $identifier): string
+    {
+        return $this->platform->quoteIdentifier($identifier);
     }
 
     private function resolveRequestedBaseNames(array $tableBaseNames): array
