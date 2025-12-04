@@ -53,12 +53,12 @@ class TokenService {
             $token['expiresIn'] = $expiresAt;
         }
 
-        $appTokenTable = $this->tableNamer->for($businessId, 'app_token');
+        $appTokenTable = $this->tableNamer->for(null, 'app_token');
         $sql = <<<SQL
         INSERT INTO {$appTokenTable}
-            (app_token_id, access_token, refresh_token, expires_at)
-        VALUES (1, :access, :refresh, :exp)
-        ON CONFLICT (app_token_id) DO UPDATE SET
+            (business_id, access_token, refresh_token, expires_at)
+        VALUES (:businessId, :access, :refresh, :exp)
+        ON CONFLICT (business_id) DO UPDATE SET
             access_token  = EXCLUDED.access_token,
             refresh_token = EXCLUDED.refresh_token,
             expires_at    = EXCLUDED.expires_at,
@@ -68,6 +68,7 @@ class TokenService {
         try {
             $stmt = $this->context->getConn()->prepare($sql);
             $stmt->executeStatement([
+                'businessId' => $businessId,
                 'access'  => $token['accessToken'],
                 'refresh' => $token['refreshToken'],
                 'exp'     => $token['expiresIn']->format('Y-m-d H:i:sP'),
@@ -92,15 +93,17 @@ class TokenService {
     {
         $this->resetFailedTransactionIfNeeded();
 
-        $appTokenTable = $this->tableNamer->for($businessId, 'app_token');
+        $appTokenTable = $this->tableNamer->for(null, 'app_token');
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
           FROM {$appTokenTable}
+         WHERE business_id = :businessId
          LIMIT 1
         SQL;
 
         try {
             $row = $this->context->getConn()->fetchAssociative($sql, [
+                'businessId' => $businessId,
             ]);
 
             if ($array) {
@@ -132,16 +135,16 @@ class TokenService {
         // Safely interpolate $minutes into the INTERVAL clause
         $intervalSql = "NOW() + INTERVAL '{$minutes} minutes'";
 
-        $appTokenTable = $this->tableNamer->for($businessId, 'app_token');
+        $appTokenTable = $this->tableNamer->for(null, 'app_token');
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
           FROM {$appTokenTable}
-         WHERE expires_at <= {$intervalSql}
+         WHERE business_id = :businessId AND expires_at <= {$intervalSql}
         SQL;
 
         try {
             $stmt = $this->context->getConn()->prepare($sql);
-            return $stmt->executeQuery()->fetchAllAssociative();
+            return $stmt->executeQuery(['businessId' => $businessId])->fetchAllAssociative();
         } catch (\Exception $e) {
             throw new \RuntimeException(
                 "Failed to query expiring app tokens for tenant={$businessId} (next {$minutes} minutes): " . $e->getMessage(),
@@ -175,12 +178,12 @@ class TokenService {
             $token['expiresIn'] = $expiresAt;
         }
 
-        $merchantTokenTable = $this->tableNamer->for($businessId, 'merchant_token');
+        $merchantTokenTable = $this->tableNamer->for(null, 'merchant_token');
         $sql = <<<SQL
         INSERT INTO {$merchantTokenTable}
-            (merchant_token_id, access_token, refresh_token, expires_at)
-        VALUES (1, :access, :refresh, :exp)
-        ON CONFLICT (merchant_token_id) DO UPDATE SET
+            (business_id, access_token, refresh_token, expires_at)
+        VALUES (:businessId, :access, :refresh, :exp)
+        ON CONFLICT (business_id) DO UPDATE SET
             access_token  = EXCLUDED.access_token,
             refresh_token = EXCLUDED.refresh_token,
             expires_at    = EXCLUDED.expires_at,
@@ -190,6 +193,7 @@ class TokenService {
         try {
             $stmt = $this->context->getConn()->prepare($sql);
             $stmt->executeStatement([
+                'businessId' => $businessId,
                 'access'  => $token['accessToken'],
                 'refresh' => $token['refreshToken'],
                 'exp'     => $token['expiresIn']->format('Y-m-d H:i:sP'),
@@ -214,15 +218,17 @@ class TokenService {
     {
         $this->resetFailedTransactionIfNeeded();
 
-        $merchantTokenTable = $this->tableNamer->for($businessId, 'merchant_token');
+        $merchantTokenTable = $this->tableNamer->for(null, 'merchant_token');
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
           FROM {$merchantTokenTable}
+         WHERE business_id = :businessId
          LIMIT 1
         SQL;
 
         try {
             $row = $this->context->getConn()->fetchAssociative($sql, [
+                'businessId' => $businessId,
             ]);
 
             if ($array) {
@@ -253,16 +259,16 @@ class TokenService {
 
         $intervalSql = "NOW() + INTERVAL '{$minutes} minutes'";
 
-        $merchantTokenTable = $this->tableNamer->for($businessId, 'merchant_token');
+        $merchantTokenTable = $this->tableNamer->for(null, 'merchant_token');
         $sql = <<<SQL
         SELECT access_token, refresh_token, expires_at
           FROM {$merchantTokenTable}
-         WHERE expires_at <= {$intervalSql}
+         WHERE business_id = :businessId AND expires_at <= {$intervalSql}
         SQL;
 
         try {
             $stmt = $this->context->getConn()->prepare($sql);
-            return $stmt->executeQuery()->fetchAllAssociative();
+            return $stmt->executeQuery(['businessId' => $businessId])->fetchAllAssociative();
         } catch (\Exception $e) {
             throw new \RuntimeException(
                 "Failed to query expiring merchant tokens for tenant={$businessId} (next {$minutes} minutes): " . $e->getMessage(),
