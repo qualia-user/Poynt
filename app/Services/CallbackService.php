@@ -70,6 +70,8 @@ class CallbackService
             ];
         }
 
+        $handler->storeTokens($tokenResult['appToken'] ?? [], $tokenResult['merchantToken'] ?? []);
+
         $workflowSucceeded = $this->runBusinessWorkflow(
             $handler->getBusinessId(),
             $handler->getStoreId(),
@@ -171,14 +173,10 @@ class CallbackService
             ];
         }
 
-        $appToken = $tokenResponse['data']['appAccessToken'] ?? [];
-        $merchantToken = $tokenResponse['data']['merchantAccessToken'] ?? [];
-        $handler->storeTokens($appToken, $merchantToken);
-
         return [
             'success' => true,
-            'appToken' => $appToken,
-            'merchantToken' => $merchantToken,
+            'appToken' => $tokenResponse['data']['appAccessToken'] ?? [],
+            'merchantToken' => $tokenResponse['data']['merchantAccessToken'] ?? [],
         ];
     }
 
