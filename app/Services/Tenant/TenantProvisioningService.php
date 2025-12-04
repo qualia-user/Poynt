@@ -46,14 +46,6 @@ class TenantProvisioningService
             ];
         }
 
-        if (!$this->tenantRowExists($tenantId)) {
-            return [
-                'success' => false,
-                'status' => 'not_found',
-                'message' => sprintf('Tenant row for %s not found', $tenantId),
-            ];
-        }
-
         $provisioningResult = $this->provisioner->provision($tenantId, $templates);
         $response = [
             'success' => $provisioningResult['success'],
@@ -90,15 +82,5 @@ class TenantProvisioningService
         }
 
         return $normalized;
-    }
-
-    private function tenantRowExists(string $tenantId): bool
-    {
-        $existing = $this->context->getConn()->fetchOne(
-            'SELECT 1 FROM business WHERE business_id = ? LIMIT 1',
-            [$tenantId]
-        );
-
-        return $existing !== false;
     }
 }
