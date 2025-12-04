@@ -106,16 +106,6 @@ class CallbackService
             return false;
         }
 
-        $businessService = $this->serviceFactory->business($businessId);
-
-        if (!$this->syncResourceCollection($businessId, $businessService, get_class($businessService))) {
-            $this->context->getLog()->warning(
-                sprintf('CallbackService::prepareTenantStorage failed to sync business record for %s.', $businessId)
-            );
-
-            return false;
-        }
-
         $provisioning = $this->tenantProvisioningService->provisionTenant($businessId);
         if (!($provisioning['success'] ?? false)) {
             $this->context->getLog()->error(
@@ -132,6 +122,16 @@ class CallbackService
                 implode(',', $provisioning['templates'] ?? [])
             )
         );
+
+        $businessService = $this->serviceFactory->business($businessId);
+
+        if (!$this->syncResourceCollection($businessId, $businessService, get_class($businessService))) {
+            $this->context->getLog()->warning(
+                sprintf('CallbackService::prepareTenantStorage failed to sync business record for %s.', $businessId)
+            );
+
+            return false;
+        }
 
         return true;
     }
