@@ -94,6 +94,11 @@ The OAuth callback flow provisions and validates tenant storage before running t
   ```bash
   php scripts/purge_business.php --business=<BUSINESS_ID> [--drop-tokens]
   ```
+- `scripts/delete_subscriptions.php` removes subscriptions for a business using the merchant token. Add `--dry-run` to list the
+  subscriptions that would be removed without deleting them. Usage:
+  ```bash
+  php scripts/delete_subscriptions.php --business=<BUSINESS_ID> [--dry-run]
+  ```
 
 ## Testing
 Run the PHPUnit suite after installing dependencies:
