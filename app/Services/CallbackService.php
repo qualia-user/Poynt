@@ -1075,6 +1075,29 @@ class CallbackService
         $transactionStarted = false;
 
         try {
+            try {
+                $dropResult = $this->tenantProvisioningService->dropTenant($businessId);
+
+                if (!($dropResult['success'] ?? false)) {
+                    $this->context->getLog()->warning(
+                        sprintf(
+                            'CallbackService::purgeBusinessInstallation failed to drop tenant tables for business %s: %s',
+                            $businessId,
+                            $dropResult['error'] ?? 'Unknown error'
+                        )
+                    );
+                }
+            } catch (Throwable $dropException) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'CallbackService::purgeBusinessInstallation drop failed for business %s: %s',
+                        $businessId,
+                        $dropException->getMessage()
+                    ),
+                    ['exception' => $dropException]
+                );
+            }
+
             $conn->beginTransaction();
             $transactionStarted = true;
 

@@ -17,12 +17,14 @@ use ReflectionMethod;
 
 class CallbackServiceTest extends TestCase
 {
-    private function createCallbackService(Context $context): CallbackService
-    {
+    private function createCallbackService(
+        Context $context,
+        ?TenantProvisioningService $tenantProvisioningService = null
+    ): CallbackService {
         $platformRegistry = $this->createMock(PlatformRegistry::class);
         $serviceFactory = $this->createMock(ServiceFactory::class);
 
-        return new CallbackService($context, $platformRegistry, $serviceFactory);
+        return new CallbackService($context, $platformRegistry, $serviceFactory, $tenantProvisioningService);
     }
 
     public function testNormalizeResourceItemsSeparatesLinksFromItems(): void
@@ -158,10 +160,17 @@ class CallbackServiceTest extends TestCase
 
         $context->method('getConn')->willReturn($connection);
 
+        $tenantProvisioningService = $this->createMock(TenantProvisioningService::class);
+        $tenantProvisioningService->expects($this->once())
+            ->method('dropTenant')
+            ->with('business-123')
+            ->willReturn(['success' => true]);
+
         $callbackService = new CallbackService(
             $context,
             $this->createMock(PlatformRegistry::class),
-            $this->createMock(ServiceFactory::class)
+            $this->createMock(ServiceFactory::class),
+            $tenantProvisioningService
         );
 
         $callbackService->purgeBusiness('business-123', false);
@@ -191,10 +200,17 @@ class CallbackServiceTest extends TestCase
 
         $context->method('getConn')->willReturn($connection);
 
+        $tenantProvisioningService = $this->createMock(TenantProvisioningService::class);
+        $tenantProvisioningService->expects($this->once())
+            ->method('dropTenant')
+            ->with('business-123')
+            ->willReturn(['success' => true]);
+
         $callbackService = new CallbackService(
             $context,
             $this->createMock(PlatformRegistry::class),
-            $this->createMock(ServiceFactory::class)
+            $this->createMock(ServiceFactory::class),
+            $tenantProvisioningService
         );
 
         $callbackService->purgeBusiness('business-123');
