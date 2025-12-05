@@ -626,6 +626,7 @@ DECLARE
         'transaction_receipt', 'transaction', 'order_shipment', 'order_history', 'order_item', 'order',
         'hook_delivery', 'hook', 'paylink_link', 'paylink_payment', 'paylink_item', 'paylink',
         'category_tax', 'category_product', 'category', 'catalog_available_discount', 'catalog_product_tax', 'catalog_product',
+        'tax',
         'catalog', 'variant_inventory', 'inventory', 'inventory_summary', 'product_variant', 'product',
         'business_user', 'customer', 'token_refresh_log', 'log', 'webhook_audit', 'subscription',
         'merchant_token', 'app_token', 'terminal', 'store'
