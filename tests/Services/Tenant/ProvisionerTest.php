@@ -117,7 +117,8 @@ class ProvisionerTest extends TestCase
 
         self::assertSame('SELECT pg_advisory_xact_lock(hashtext(?))', $statements[0]);
         self::assertStringStartsWith('DROP TABLE IF EXISTS public."demotenant_transaction_receipt"', $statements[1]);
-        self::assertStringStartsWith('DROP TABLE IF EXISTS public."demotenant_store"', $statements[count($statements) - 2]);
+        self::assertStringStartsWith('DROP TABLE IF EXISTS public."demotenant_store"', $statements[count($statements) - 3]);
+        self::assertStringContainsString('DELETE FROM tenant_table_registry', $statements[count($statements) - 2]);
         self::assertStringContainsString('DELETE FROM tenant_schema_version', end($statements));
     }
 
