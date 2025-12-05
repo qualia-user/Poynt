@@ -1060,9 +1060,10 @@ class CallbackService
     }
 
     /**
-     * Remove all local data for a business.
+     * Remove all local data for a business by dropping tenant tables and clearing registry rows.
      *
-     * Tokens are preserved by default so a subsequent reinstall can reuse them.
+     * Token tables are part of the tenant schema and will be dropped as well; the $preserveTokens
+     * flag is retained for compatibility and only controls informational logging.
      */
     public function purgeBusiness(string $businessId, bool $preserveTokens = true): void
     {
@@ -1074,37 +1075,35 @@ class CallbackService
         $conn = $this->context->getConn();
         $transactionStarted = false;
 
+        $dropResult = $this->tenantProvisioningService->dropTenant($businessId);
+
+        if (!($dropResult['success'] ?? false)) {
+            $this->context->getLog()->error(
+                sprintf(
+                    'CallbackService::purgeBusinessInstallation failed to drop tenant tables for business %s: %s',
+                    $businessId,
+                    $dropResult['message'] ?? 'unknown error'
+                )
+            );
+
+            return;
+        }
+
+        if ($preserveTokens) {
+            $this->context->getLog()->info(
+                sprintf(
+                    'CallbackService::purgeBusinessInstallation dropping tenant tables removes stored tokens for business %s.',
+                    $businessId
+                )
+            );
+        }
+
         try {
             $conn->beginTransaction();
             $transactionStarted = true;
 
-            $conn->executeStatement('DELETE FROM token_refresh_log WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM hook_delivery WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM hook WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM paylink WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM "order" WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM transaction WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM subscription WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM catalog_available_discount WHERE catalog_id IN (SELECT catalog_id FROM catalog WHERE business_id = :biz)', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM catalog_product WHERE catalog_id IN (SELECT catalog_id FROM catalog WHERE business_id = :biz)', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM catalog WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM variant_inventory WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM inventory WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM inventory_summary WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM product_variant WHERE product_id IN (SELECT product_id FROM product WHERE business_id = :biz)', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM product WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM category WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM tax WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM customer WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM business_user WHERE business_id = :biz', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM terminal WHERE store_id IN (SELECT store_id FROM store WHERE business_id = :biz)', ['biz' => $businessId]);
-            $conn->executeStatement('DELETE FROM store WHERE business_id = :biz', ['biz' => $businessId]);
-
-            if (!$preserveTokens) {
-                $conn->executeStatement('DELETE FROM merchant_token WHERE business_id = :biz', ['biz' => $businessId]);
-                $conn->executeStatement('DELETE FROM app_token WHERE business_id = :biz', ['biz' => $businessId]);
-            }
-
+            $conn->executeStatement('DELETE FROM tenant_table_registry WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM tenant_schema_version WHERE tenant_id = :biz', ['biz' => $businessId]);
             $conn->executeStatement('DELETE FROM business WHERE business_id = :biz', ['biz' => $businessId]);
 
             $conn->commit();

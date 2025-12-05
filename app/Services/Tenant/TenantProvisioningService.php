@@ -74,6 +74,51 @@ class TenantProvisioningService
         return $response;
     }
 
+    /**
+     * Drop all tenant-scoped tables for the given business identifier.
+     *
+     * @param string $businessId
+     * @return array{success: bool, status: string, tenantId?: string, templateVersion?: int, message?: string}
+     */
+    public function dropTenant(string $businessId): array
+    {
+        $tenantId = strtolower(trim($businessId));
+
+        if (!$this->ensureCoreSchemaExists()) {
+            return [
+                'success' => false,
+                'status' => 'failed',
+                'message' => 'Failed to prepare core schema for tenant teardown',
+            ];
+        }
+
+        if ($tenantId === '') {
+            return [
+                'success' => false,
+                'status' => 'invalid',
+                'message' => 'Missing tenant identifier',
+            ];
+        }
+
+        $dropResult = $this->provisioner->drop($tenantId);
+
+        $response = [
+            'success' => $dropResult['success'],
+            'status' => $dropResult['success'] ? 'dropped' : 'failed',
+            'tenantId' => $tenantId,
+        ];
+
+        if (isset($dropResult['templateVersion'])) {
+            $response['templateVersion'] = $dropResult['templateVersion'];
+        }
+
+        if (!$dropResult['success'] && isset($dropResult['error'])) {
+            $response['message'] = $dropResult['error'];
+        }
+
+        return $response;
+    }
+
     private function ensureCoreSchemaExists(): bool
     {
         $conn = $this->context->getConn();

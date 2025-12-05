@@ -207,6 +207,12 @@ class Provisioner
             }
 
             $this->conn->executeStatement(
+                'DELETE FROM tenant_table_registry WHERE business_id = ?',
+                [$tenantId],
+                [ParameterType::STRING]
+            );
+
+            $this->conn->executeStatement(
                 'DELETE FROM tenant_schema_version WHERE tenant_id = ?',
                 [$tenantId],
                 [ParameterType::STRING]
