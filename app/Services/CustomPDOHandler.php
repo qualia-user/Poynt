@@ -71,6 +71,11 @@ class CustomPDOHandler extends AbstractProcessingHandler
     {
         $context = $record['context'] ?? [];
 
+        $logScope = $context['log_scope'] ?? $context['logScope'] ?? null;
+        if (is_string($logScope) && strtolower($logScope) === 'shared') {
+            return null;
+        }
+
         foreach (['businessId', 'business_id', 'merchant'] as $key) {
             if (isset($context[$key]) && is_string($context[$key]) && $context[$key] !== '') {
                 return $context[$key];

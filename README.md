@@ -100,6 +100,52 @@ The OAuth callback flow provisions and validates tenant storage before running t
   php scripts/delete_subscriptions.php --business=<BUSINESS_ID> [--dry-run]
   ```
 
+## Logging to shared vs. per-tenant tables
+`LoggerFactory::create()` wires a Monolog logger with `CustomPDOHandler`, which automatically picks the shared `log` table or a tenant-prefixed log table based on the context. Example usage:
+
+```php
+use App\Services\Support\LoggerFactory;
+
+[$logger] = LoggerFactory::create($primaryConn, $logConn);
+
+// Shared log table: omit the tenant identifier in the context
+$logger->info('Shared audit event', [
+    'type' => 'audit',
+    'details' => ['action' => 'ping'],
+]);
+
+// Per-tenant log table: include businessId/business_id/merchant in the context
+$logger->info('Tenant-scoped event', [
+    'businessId' => 'tenant_123',
+    'type' => 'webhook',
+    'details' => ['event' => 'subscription.updated'],
+]);
+
+// Service example: log to the shared table from a tenant-aware workflow
+// Keep the tenant identifier out of the top-level context keys
+// (businessId/business_id/merchant) so TableNamer picks the shared `log` table.
+// If processors add a tenant ID by default, set log_scope => 'shared' to override.
+if (!($dropResult['success'] ?? false)) {
+    $this->context->getLog()->error(
+        sprintf(
+            'CallbackService::purgeBusinessInstallation failed to drop tenant tables for business %s: %s',
+            $businessId,
+            $dropResult['message'] ?? 'unknown error'
+        ),
+        [
+            'log_scope' => 'shared',
+            'type' => 'maintenance',
+            'details' => [
+                'businessId' => $businessId,
+                'dropResult' => $dropResult,
+            ],
+        ]
+    );
+
+    return;
+}
+```
+
 ## Testing
 Run the PHPUnit suite after installing dependencies:
 ```bash
