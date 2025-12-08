@@ -1083,7 +1083,15 @@ class CallbackService
                     'CallbackService::purgeBusinessInstallation failed to drop tenant tables for business %s: %s',
                     $businessId,
                     $dropResult['message'] ?? 'unknown error'
-                )
+                ),
+                [
+                    'log_scope' => 'shared',
+                    'type' => 'maintenance',
+                    'details' => [
+                        'businessId' => $businessId,
+                        'dropResult' => $dropResult,
+                    ],
+                ]
             );
 
             return;
