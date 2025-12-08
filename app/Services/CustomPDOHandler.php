@@ -46,7 +46,9 @@ class CustomPDOHandler extends AbstractProcessingHandler
             $connection->connect();
         }
 
-        $tableName = $this->tableNamer->for($this->resolveBusinessId($record), 'log');
+        $businessId = $this->resolveBusinessId($record);
+
+        $tableName = $this->tableNamer->for($businessId, 'log');
 
         $this->ensureLogTableExists($connection, $tableName);
 
@@ -70,6 +72,11 @@ class CustomPDOHandler extends AbstractProcessingHandler
     private function resolveBusinessId(array $record): ?string
     {
         $context = $record['context'] ?? [];
+        $extra = $record['extra'] ?? [];
+
+        if ($this->isSharedScope($context, $extra)) {
+            return null;
+        }
 
         $logScope = $context['log_scope'] ?? $context['logScope'] ?? null;
         if (is_string($logScope) && strtolower($logScope) === 'shared') {
@@ -80,9 +87,32 @@ class CustomPDOHandler extends AbstractProcessingHandler
             if (isset($context[$key]) && is_string($context[$key]) && $context[$key] !== '') {
                 return $context[$key];
             }
+
+            if (isset($extra[$key]) && is_string($extra[$key]) && $extra[$key] !== '') {
+                return $extra[$key];
+            }
         }
 
         return null;
+    }
+
+    private function isSharedScope(array $context, array $extra): bool
+    {
+        $logScope = $context['log_scope'] ?? $context['logScope'] ?? $extra['log_scope'] ?? $extra['logScope'] ?? null;
+
+        if ($logScope === null) {
+            return false;
+        }
+
+        if (is_bool($logScope)) {
+            return $logScope === true;
+        }
+
+        if (is_string($logScope) && strtolower(trim($logScope)) === 'shared') {
+            return true;
+        }
+
+        return false;
     }
 
     private function ensureLogTableExists(Connection $connection, string $tableName): void
