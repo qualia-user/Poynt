@@ -51,6 +51,7 @@ class Provisioner
         'app_token',
         'terminal',
         'store',
+        'tax',
     ];
 
     private Context $context;

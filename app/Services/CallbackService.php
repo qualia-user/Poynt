@@ -176,7 +176,6 @@ class CallbackService
 
         $appToken = $tokenResponse['data']['appAccessToken'] ?? [];
         $merchantToken = $tokenResponse['data']['merchantAccessToken'] ?? [];
-        $handler->storeTokens($appToken, $merchantToken);
 
         return [
             'success' => true,
