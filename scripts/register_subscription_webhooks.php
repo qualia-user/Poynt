@@ -9,6 +9,7 @@ use App\Core\Api;
 use App\Core\Context;
 use App\Http\GuzzleClientFactory;
 use App\Services\Support\LoggerFactory;
+use App\Services\OAuthService;
 use App\Services\TokenService;
 use App\Services\WebhookService;
 use Doctrine\DBAL\DriverManager;
@@ -16,15 +17,13 @@ use Throwable;
 
 require_once __DIR__ . '/../public/bootstrap.php';
 
-$options = getopt('', ['business:']);
+$orgId = ConfigApp::$orgId ?? '';
 
-if (!isset($options['business']) || $options['business'] === '') {
-    fwrite(STDERR, "Usage: php scripts/register_subscription_webhooks.php --business=<BUSINESS_ID>\n");
+if (!is_string($orgId) || $orgId === '') {
+    fwrite(STDERR, "ConfigApp::\$orgId must be configured to register subscription webhooks.\n");
 
     exit(1);
 }
-
-$businessId = $options['business'];
 
 $connectionParams = [
     'driver' => 'pdo_pgsql',
@@ -48,32 +47,44 @@ $api = new Api('', $log, $requestId);
 $httpClientFactory = new GuzzleClientFactory();
 $context = new Context($api, $conn, $log, $httpClientFactory);
 
+$oauthService = new OAuthService($context);
 $tokenService = new TokenService($context);
-$merchantToken = null;
+$appToken = null;
 
 try {
-    $merchantToken = $tokenService->getMerchantToken($businessId);
+    $appToken = $oauthService->exchangeJwtForToken();
 } catch (Throwable $e) {
     $log->error(
-        sprintf('Failed to retrieve merchant token for business %s: %s', $businessId, $e->getMessage()),
+        sprintf('Failed to retrieve app token for org %s: %s', $orgId, $e->getMessage()),
         ['exception' => $e]
     );
 }
 
-if (!is_string($merchantToken) || $merchantToken === '') {
-    fwrite(STDERR, sprintf("Missing merchant token for business %s.\n", $businessId));
+if (!is_array($appToken) || empty($appToken['accessToken'])) {
+    fwrite(STDERR, sprintf("Missing app token for org %s.\n", $orgId));
 
     exit(1);
 }
 
-$webhookService = new WebhookService($context, $businessId);
+try {
+    $tokenService->saveAppToken($orgId, $appToken);
+} catch (Throwable $e) {
+    $log->error(
+        sprintf('Failed to persist app token for org %s: %s', $orgId, $e->getMessage()),
+        ['exception' => $e]
+    );
+
+    exit(1);
+}
+
+$webhookService = new WebhookService($context, $orgId);
 
 try {
-    $webhookService->registerSubscriptionWebhooks($merchantToken);
+    $webhookService->registerSubscriptionWebhooks($appToken['accessToken']);
     fwrite(STDOUT, "Subscription webhooks registered.\n");
 } catch (Throwable $e) {
     $log->error(
-        sprintf('Failed to register subscription webhooks for business %s: %s', $businessId, $e->getMessage()),
+        sprintf('Failed to register subscription webhooks for org %s: %s', $orgId, $e->getMessage()),
         ['exception' => $e]
     );
 
