@@ -458,12 +458,21 @@ class WebhookService
             }
         }
 
-        $tokenService = new TokenService($this->context);
-        $merchantAccessToken = $tokenService->getMerchantToken($tokenBusinessId);
+        if ($this->eventsRequireOrgId($eventTypes)) {
+            $orgId = ConfigApp::$orgId ?? '';
+            if (is_string($orgId) && $orgId !== '') {
+                $tokenBusinessId = $orgId;
+            }
+        }
 
-        if (!is_string($merchantAccessToken) || $merchantAccessToken === '') {
+        $tokenService = new TokenService($this->context);
+        $accessToken = $this->eventsRequireOrgId($eventTypes)
+            ? $tokenService->getAppToken($tokenBusinessId)
+            : $tokenService->getMerchantToken($tokenBusinessId);
+
+        if (!is_string($accessToken) || $accessToken === '') {
             $this->context->getLog()->error(
-                sprintf('WebhookService::ensureWebhookExists: missing merchant token for business %s', $tokenBusinessId)
+                sprintf('WebhookService::ensureWebhookExists: missing access token for business %s', $tokenBusinessId)
             );
 
             return null;
@@ -490,7 +499,7 @@ class WebhookService
                         self::POYNT_WEBHOOK_URL . '/' . rawurlencode($hookId),
                         [
                             'headers' => [
-                                'Authorization' => 'Bearer ' . $merchantAccessToken,
+                                'Authorization' => 'Bearer ' . $accessToken,
                             ],
                             'query' => [
                                 'businessId' => $hookBusinessId,
@@ -518,7 +527,7 @@ class WebhookService
             }
         }
 
-        return $this->registerWebhook($merchantAccessToken, $eventTypes);
+        return $this->registerWebhook($accessToken, $eventTypes);
     }
 
     /**
@@ -621,25 +630,18 @@ class WebhookService
         $tokenService = new TokenService($this->context);
         $merchantToken = $tokenService->getMerchantToken($businessId);
         $appToken = $tokenService->getAppToken($businessId);
+        $accessToken = is_string($appToken) && $appToken !== '' ? $appToken : $merchantToken;
 
-        if (!is_string($appToken) || $appToken === '') {
+        if (!is_string($accessToken) || $accessToken === '') {
             $this->context->getLog()->error(
-                sprintf('WebhookService::fetchByBusinessId: missing app access token for business %s', $businessId)
-            );
-
-            return false;
-        }
-
-        if (!is_string($merchantToken) || $merchantToken === '') {
-            $this->context->getLog()->error(
-                sprintf('WebhookService::fetchByBusinessId: missing merchant access token for business %s', $businessId)
+                sprintf('WebhookService::fetchByBusinessId: missing access token for business %s', $businessId)
             );
 
             return false;
         }
 
         try {
-            $hooks = $this->fetchAllHooks($businessId, $appToken);
+            $hooks = $this->fetchAllHooks($businessId, $accessToken);
             if ($hooks === false) {
                 $this->context->getLog()->error(
                     sprintf(
@@ -650,7 +652,7 @@ class WebhookService
                 return false;
             }
 
-            $hooks = $this->deleteDuplicateHooks($hooks, $businessId, $merchantToken);
+            $hooks = $this->deleteDuplicateHooks($hooks, $businessId, $accessToken);
 
             $hooksById = [];
             foreach ($hooks as $hook) {
@@ -821,7 +823,7 @@ class WebhookService
      * @param array<int, mixed> $hooks
      * @return array<int, mixed>
      */
-    private function deleteDuplicateHooks(array $hooks, string $businessId, string $merchantToken): array
+    private function deleteDuplicateHooks(array $hooks, string $businessId, string $accessToken): array
     {
         $uniqueHooks = [];
         $seenHookKeys = [];
@@ -871,7 +873,7 @@ class WebhookService
                     self::POYNT_WEBHOOK_URL . '/' . rawurlencode($hookId),
                     [
                         'headers' => [
-                            'Authorization' => 'Bearer ' . $merchantToken,
+                            'Authorization' => 'Bearer ' . $accessToken,
                         ],
                         'query' => [
                             'businessId' => $hookBusinessId,
