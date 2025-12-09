@@ -7,13 +7,6 @@ use App\Core\Response;
 use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\OAuthHandlerInterface;
 use App\Services\Tenant\TenantProvisioningService;
-use App\Services\BusinessService;
-use App\Services\SubscriptionService;
-use App\Services\Support\PoyntDataFormatter as Format;
-use DateInterval;
-use DateTimeImmutable;
-use DateTimeInterface;
-use DateTimeZone;
 use RuntimeException;
 use Throwable;
 
@@ -66,9 +59,6 @@ class CallbackService
             ];
         }
 
-        $requestedPlanId = $this->normalizePlanParameter($this->context->getApi()->getParam('planId'));
-        $requestedPlanName = $this->normalizePlanParameter($this->context->getApi()->getParam('planName'));
-
         if (!$this->prepareTenantStorage($handler->getBusinessId())) {
             return [
                 'success' => false,
@@ -81,11 +71,7 @@ class CallbackService
 
         $workflowSucceeded = $this->runBusinessWorkflow(
             $handler->getBusinessId(),
-            $handler->getStoreId(),
-            $tokenResult['appToken'] ?? [],
-            $tokenResult['merchantToken'] ?? [],
-            $requestedPlanId,
-            $requestedPlanName
+            $handler->getStoreId()
         );
 
         if (!$workflowSucceeded) {
@@ -195,11 +181,7 @@ class CallbackService
      */
     private function runBusinessWorkflow(
         ?string $businessId,
-        ?string $storeId,
-        mixed $appToken,
-        mixed $merchantToken,
-        ?string $requestedPlanId,
-        ?string $requestedPlanName
+        ?string $storeId
     ): bool {
 
         if (!$businessId) {
@@ -213,8 +195,6 @@ class CallbackService
             [
                 'businessId' => $businessId,
                 'storeId' => $storeId,
-                'requestedPlanId' => $requestedPlanId,
-                'requestedPlanName' => $requestedPlanName,
             ]
         );
 
@@ -225,53 +205,21 @@ class CallbackService
             $conn->beginTransaction();
             $transactionStarted = true;
 
-            $this->context->getLog()->debug(
-                sprintf('CallbackService::runBusinessWorkflow transaction started for business %s.', $businessId)
-            );
-
             if ($this->installationExists($businessId)) {
                 $this->context->getLog()->info(
                     sprintf('Existing installation detected for business %s, reactivating.', $businessId)
                 );
                 $this->reactivateInstallation($businessId);
             }
-//            else {
-//                $this->context->getLog()->info(
-//                    sprintf('No existing installation found for business %s, attempting trial start if necessary.', $businessId)
-//                );
-//                $this->startTrialIfMissing($businessId, $storeId);
-//            }
-
-            $appAccessToken = $this->extractAccessToken($appToken);
-            $merchantAccessToken = $this->extractAccessToken($merchantToken);
-
             $this->context->getLog()->debug(
-                sprintf('CallbackService::runBusinessWorkflow extracted access tokens for business %s.', $businessId),
-                [
-                    'appTokenPresent' => $appAccessToken !== null,
-                    'merchantTokenPresent' => $merchantAccessToken !== null,
-                ]
+                sprintf('CallbackService::runBusinessWorkflow transaction started for business %s.', $businessId)
             );
 
-            $trialExpiresAt = $this->bootstrapBusinessTrial($businessId, $storeId);
-
-            if (!$this->synchronizeStoresAndSubscriptions(
-                $businessId,
-                $appAccessToken,
-                $merchantAccessToken,
-                $requestedPlanId,
-                $requestedPlanName,
-                $trialExpiresAt
-            )) {
+            if (!$this->synchronizeStores($businessId)) {
                 throw new RuntimeException(
-                    sprintf('Failed to synchronize stores or subscriptions for business %s.', $businessId)
+                    sprintf('Failed to synchronize stores for business %s.', $businessId)
                 );
             }
-
-//            $conn->commit(); // TODO REMOVE!!
-            $this->context->getLog()->info(
-                sprintf('CallbackService::runBusinessWorkflow completed store/subscription sync for business %s.', $businessId)
-            );
 
             if (!$this->gatherInitialResources($businessId)) {
                 throw new RuntimeException(
@@ -317,76 +265,6 @@ class CallbackService
 
             return false;
         }
-    }
-
-    private function upsertBusinessRecord(string $businessId): void
-    {
-        /** @var BusinessService $businessService */
-        $businessService = $this->serviceFactory->business($businessId);
-
-        $payload = $businessService->fetchBusiness($businessId);
-        if (!is_array($payload)) {
-            throw new RuntimeException(
-                sprintf('Unable to fetch business payload for %s.', $businessId)
-            );
-        }
-
-        if (!$businessService->upsert($payload)) {
-            throw new RuntimeException(
-                sprintf('Failed to upsert business %s.', $businessId)
-            );
-        }
-
-        $this->context->getLog()->info(
-            sprintf('CallbackService::runBusinessWorkflow upserted business %s.', $businessId)
-        );
-    }
-
-    private function bootstrapBusinessTrial(string $businessId, ?string $storeId): ?DateTimeImmutable
-    {
-        /** @var BusinessService $businessService */
-        $businessService = $this->serviceFactory->business($businessId);
-        $trialState = $businessService->getTrialState($businessId);
-        $existingExpiry = $this->normalizeTrialExpiry($trialState['expiresAt'] ?? null);
-
-        if ($existingExpiry !== null) {
-            return $existingExpiry;
-        }
-
-        $trialExpiry = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
-            ->add(new DateInterval(sprintf('P%dD', SubscriptionService::DEFAULT_TRIAL_DAYS)));
-
-        $payload = $businessService->fetchBusiness($businessId);
-        if (!is_array($payload)) {
-            $this->context->getLog()->warning(
-                sprintf('Using fallback business payload while initializing trial for %s.', $businessId)
-            );
-
-            $payload = [
-                'id' => $businessId,
-                'legalName' => $businessId,
-            ];
-        }
-
-        $payload['trialEligible'] = true;
-        $payload['trialExpiresAt'] = $trialExpiry;
-
-        if (!$businessService->upsert($payload)) {
-            throw new RuntimeException(
-                sprintf('Failed to upsert business %s while initializing trial window.', $businessId)
-            );
-        }
-
-        $this->recordPlanDecision(
-            $businessId,
-            $storeId,
-            'free_trial',
-            'CallbackService',
-            'Initialized business-level trial window.',
-            ['trialExpiresAt' => $trialExpiry->format(DateTimeInterface::ATOM)]
-        );
-
-        return $trialExpiry;
     }
 
     private function logWorkflowFailureRootCause(?string $businessId, Throwable $exception): void
@@ -467,47 +345,9 @@ class CallbackService
         }
     }
 
-    private function reactivateLocalSubscriptions(string $businessId): void
+
+    private function synchronizeStores(string $businessId): bool
     {
-        try {
-            $subscriptions = $this->context->getConn()->fetchAllAssociative(
-                'SELECT subscription_id, store_id FROM subscription WHERE business_id = ?',
-                [$businessId]
-            );
-        } catch (Throwable $e) {
-            $this->context->getLog()->error(
-                sprintf('Failed to load subscriptions for business %s during reactivation: %s', $businessId, $e->getMessage())
-            );
-
-            return;
-        }
-
-        if (empty($subscriptions)) {
-            return;
-        }
-
-        $subscriptionService = $this->serviceFactory->subscription();
-
-        foreach ($subscriptions as $subscription) {
-            $subscriptionId = $subscription['subscription_id'] ?? null;
-            $storeId = $subscription['store_id'] ?? null;
-
-            if (!$subscriptionId || !$storeId) {
-                continue;
-            }
-
-            $subscriptionService->activateSubscription($subscriptionId, $businessId, $storeId);
-        }
-    }
-
-    private function synchronizeStoresAndSubscriptions(
-        string $businessId,
-        ?string $appAccessToken,
-        ?string $merchantAccessToken,
-        ?string $requestedPlanId,
-        ?string $requestedPlanName,
-        ?DateTimeImmutable $businessTrialExpiresAt
-    ): bool {
         $storeService = $this->serviceFactory->store($businessId);
         $storesPayload = $storeService->fetchByBusinessId($businessId);
 
@@ -522,34 +362,6 @@ class CallbackService
         $normalizedStores = $this->normalizeResourceItems($storesPayload);
         if (empty($normalizedStores['items'])) {
             return true;
-        }
-
-        $subscriptionService = $this->serviceFactory->subscription($businessId);
-        $planId = $requestedPlanId;
-
-        if ($appAccessToken && $planId === null) {
-            $plans = $subscriptionService->fetchPlans($appAccessToken);
-            if ($plans === null) {
-                return false;
-            }
-
-            if ($requestedPlanName !== null) {
-                $planId = $this->findPlanIdByName($plans, $requestedPlanName);
-
-                if ($planId === null) {
-                    $this->context->getLog()->warning(
-                        sprintf(
-                            'Requested subscription plan "%s" not found for business %s; falling back to default plan.',
-                            $requestedPlanName,
-                            $businessId
-                        )
-                    );
-                }
-            }
-
-            if ($planId === null) {
-                $planId = $this->selectDefaultPlanId($plans);
-            }
         }
 
         foreach ($normalizedStores['items'] as $storeData) {
@@ -569,479 +381,9 @@ class CallbackService
             if ($storeService->upsert($storeData) === false) {
                 return false;
             }
-
-            if (!$this->ensureStoreSubscription(
-                $businessId,
-                $storeId,
-                $appAccessToken,
-                $merchantAccessToken,
-                $planId,
-                $businessTrialExpiresAt
-            )) {
-                return false;
-            }
         }
 
         return true;
-    }
-
-    private function ensureStoreSubscription(
-        string $businessId,
-        string $storeId,
-        ?string $appAccessToken,
-        ?string $merchantAccessToken,
-        ?string $defaultPlanId,
-        ?DateTimeImmutable $businessTrialExpiresAt
-    ): bool {
-        $subscriptionService = $this->serviceFactory->subscription($businessId, $storeId);
-
-        $existing = [];
-        $matchingSubscriptions = [];
-
-        if (empty($matchingSubscriptions) && $merchantAccessToken) {
-            $existing = $subscriptionService->fetchMerchantSubscriptions($merchantAccessToken, $businessId, $storeId);
-            if ($existing === null) {
-                return false;
-            }
-            $matchingSubscriptions = $this->filterSubscriptionsForStore($existing, $storeId);
-
-            foreach ($matchingSubscriptions as $subscription) {
-                if (is_array($subscription)) {
-                    $subscriptionService->upsertLocalSubscription($subscription, $storeId);
-                }
-            }
-        }
-
-        $localSubscriptions = $this->getLocalSubscriptionsForStore($businessId, $storeId);
-
-        if ($localSubscriptions === null) {
-            return false;
-        }
-
-        $this->logSubscriptionComparison(
-            $businessId,
-            $storeId,
-            $matchingSubscriptions,
-            $localSubscriptions
-        );
-
-        $trialExpiry = $businessTrialExpiresAt;
-        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-        $trialActive = $trialExpiry !== null && $trialExpiry > $now;
-        $trialExpired = $trialExpiry !== null && $trialExpiry <= $now;
-
-        if (!empty($matchingSubscriptions) || !empty($localSubscriptions)) {
-            if ($trialActive) {
-                $planId = $this->resolvePlanIdFromSubscriptions($matchingSubscriptions, $localSubscriptions) ?? 'free_trial';
-                $this->recordPlanDecision(
-                    $businessId,
-                    $storeId,
-                    $planId,
-                    'CallbackService',
-                    'Business trial active; retaining existing subscription.',
-                    ['trialExpiresAt' => $trialExpiry?->format(DateTimeInterface::ATOM)]
-                );
-            }
-
-            return true;
-        }
-
-        if ($trialActive) {
-            try {
-                $subscriptionId = $subscriptionService->startFreeTrial($businessId, $storeId, 'free_trial', $trialExpiry);
-                $this->recordPlanDecision(
-                    $businessId,
-                    $storeId,
-                    'free_trial',
-                    'CallbackService',
-                    'Business trial active; assigning free trial plan to store.',
-                    ['subscriptionId' => $subscriptionId, 'trialExpiresAt' => $trialExpiry->format(DateTimeInterface::ATOM)]
-                );
-            } catch (Throwable $e) {
-                $this->context->getLog()->error(
-                    sprintf(
-                        'Failed to start business-aligned free trial for business %s store %s: %s',
-                        $businessId,
-                        $storeId,
-                        $e->getMessage()
-                    )
-                );
-
-                return false;
-            }
-
-            return true;
-        }
-
-        if ($trialExpired) {
-            $this->recordPlanDecision(
-                $businessId,
-                $storeId,
-                $defaultPlanId ?? 'none',
-                'CallbackService',
-                'Business trial expired; blocking until paid plan is provided.',
-                ['trialExpiresAt' => $trialExpiry->format(DateTimeInterface::ATOM)]
-            );
-
-            if (!$defaultPlanId) {
-                $this->context->getLog()->warning(
-                    sprintf(
-                        'Business %s store %s cannot continue: trial expired and no plan specified.',
-                        $businessId,
-                        $storeId
-                    )
-                );
-
-                return false;
-            }
-        }
-
-        if ($trialExpired && (!$appAccessToken || !$merchantAccessToken)) {
-            $this->context->getLog()->warning(
-                sprintf(
-                    'Business %s store %s cannot create paid subscription: tokens missing after trial expiry.',
-                    $businessId,
-                    $storeId
-                )
-            );
-
-            return false;
-        }
-
-        if (!$appAccessToken || !$merchantAccessToken || !$defaultPlanId) {
-            $this->context->getLog()->warning(
-                sprintf(
-                    'Unable to create subscription for business %s store %s: missing app token, merchant token, or plan.',
-                    $businessId,
-                    $storeId
-                )
-            );
-
-            try {
-                $fallbackSubscriptionId = $subscriptionService->startFreeTrial($businessId, $storeId, 'free_trial', $trialExpiry);
-                $this->context->getLog()->info(
-                    sprintf(
-                        'Started local free trial %s for business %s store %s as a fallback.',
-                        $fallbackSubscriptionId,
-                        $businessId,
-                        $storeId
-                    )
-                );
-            } catch (Throwable $e) {
-                $this->context->getLog()->error(
-                    sprintf(
-                        'Failed to create fallback trial subscription for business %s store %s: %s',
-                        $businessId,
-                        $storeId,
-                        $e->getMessage()
-                    )
-                );
-
-                return false;
-            }
-
-            $hasSubscription = $this->storeHasSubscription($businessId, $storeId);
-
-            return $hasSubscription === true;
-        }
-
-        $created = $subscriptionService->createSubscription(
-            $merchantAccessToken,
-            $businessId,
-            $storeId,
-            $defaultPlanId
-        );
-
-        return $created !== [];
-    }
-
-    private function resolvePlanIdFromSubscriptions(array $remoteSubscriptions, array $localSubscriptions): ?string
-    {
-        foreach ([$remoteSubscriptions, $localSubscriptions] as $collection) {
-            foreach ($collection as $subscription) {
-                if (!is_array($subscription)) {
-                    continue;
-                }
-
-                $planId = $subscription['planId'] ?? $subscription['plan_id'] ?? null;
-                if (is_string($planId) && trim($planId) !== '') {
-                    return $planId;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private function recordPlanDecision(
-        string $businessId,
-        ?string $storeId,
-        string $planId,
-        string $actor,
-        string $reason,
-        array $metadata = []
-    ): void {
-        try {
-            $this->context->getConn()->insert(
-                'subscription_plan_audit',
-                [
-                    'business_id' => $businessId,
-                    'store_id' => $storeId,
-                    'plan_id' => $planId,
-                    'decided_by' => $actor,
-                    'decision_reason' => $reason,
-                    'metadata' => Format::jsonObject($metadata),
-                ]
-            );
-        } catch (Throwable $e) {
-            $this->context->getLog()->warning(
-                sprintf(
-                    'Failed to record subscription decision for business %s store %s: %s',
-                    $businessId,
-                    $storeId ?? 'n/a',
-                    $e->getMessage()
-                )
-            );
-        }
-    }
-
-    private function normalizeTrialExpiry(mixed $value): ?DateTimeImmutable
-    {
-        if ($value instanceof DateTimeInterface) {
-            return DateTimeImmutable::createFromInterface($value);
-        }
-
-        if (is_string($value)) {
-            $trimmed = trim($value);
-            if ($trimmed === '') {
-                return null;
-            }
-
-            try {
-                return new DateTimeImmutable($trimmed);
-            } catch (Throwable) {
-                return null;
-            }
-        }
-
-        return null;
-    }
-
-    private function normalizePlanParameter(mixed $value): ?string
-    {
-        if ($value === null) {
-            return null;
-        }
-
-        if (!is_string($value) && !is_numeric($value)) {
-            return null;
-        }
-
-        $normalized = trim((string) $value);
-
-        return $normalized === '' ? null : $normalized;
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function collectPlanCandidates(?array $plans): array
-    {
-        if (!is_array($plans) || $plans === []) {
-            return [];
-        }
-
-        $queue = [$plans];
-        $candidates = [];
-
-        while ($queue !== []) {
-            $current = array_shift($queue);
-
-            if (!is_array($current) || $current === []) {
-                continue;
-            }
-
-            $identifier = $current['planId'] ?? $current['id'] ?? null;
-            if ((is_string($identifier) || is_numeric($identifier)) && (string) $identifier !== '') {
-                $id = (string) $identifier;
-                if (!isset($candidates[$id])) {
-                    $candidates[$id] = $current;
-                } else {
-                    $candidates[$id] = array_merge($candidates[$id], $current);
-                }
-            }
-
-            foreach ($current as $value) {
-                if (is_array($value)) {
-                    $queue[] = $value;
-                }
-            }
-        }
-
-        return array_values($candidates);
-    }
-
-    private function extractPlanId(array $plan): ?string
-    {
-        $identifier = $plan['planId'] ?? $plan['id'] ?? null;
-
-        if (is_string($identifier) || is_numeric($identifier)) {
-            $value = trim((string) $identifier);
-
-            return $value === '' ? null : $value;
-        }
-
-        return null;
-    }
-
-    private function findPlanIdByName(?array $plans, string $requestedPlanName): ?string
-    {
-        $requested = strtolower($requestedPlanName);
-        if ($requested === '') {
-            return null;
-        }
-
-        foreach ($this->collectPlanCandidates($plans) as $plan) {
-            $planId = $this->extractPlanId($plan);
-            if ($planId === null) {
-                continue;
-            }
-
-            $name = isset($plan['name']) ? strtolower((string) $plan['name']) : null;
-            if ($name === $requested || strtolower($planId) === $requested) {
-                return $planId;
-            }
-        }
-
-        return null;
-    }
-
-    private function extractAccessToken(mixed $token): ?string
-    {
-        if (!is_array($token)) {
-            return null;
-        }
-
-        foreach (['accessToken', 'access_token'] as $key) {
-            $value = $token[$key] ?? null;
-            if (is_string($value) && $value !== '') {
-                return $value;
-            }
-        }
-
-        return null;
-    }
-
-    private function selectDefaultPlanId(?array $plans): ?string
-    {
-        $allCandidates = $this->collectPlanCandidates($plans);
-
-        if ($allCandidates === []) {
-            return null;
-        }
-
-        $storeScoped = array_filter($allCandidates, function (array $plan): bool {
-            return $this->isStoreScopedPlan($plan);
-        });
-
-        $candidates = $storeScoped !== [] ? array_values($storeScoped) : $allCandidates;
-
-        foreach ($candidates as $plan) {
-            $planId = $this->extractPlanId($plan);
-            if ($planId === null) {
-                continue;
-            }
-
-            $status = strtolower((string) ($plan['status'] ?? ''));
-            if ($status === '' || in_array($status, ['active', 'enabled'], true)) {
-                return $planId;
-            }
-        }
-
-        foreach ($candidates as $plan) {
-            $planId = $this->extractPlanId($plan);
-            if ($planId !== null) {
-                return $planId;
-            }
-        }
-
-        return null;
-    }
-
-    private function isStoreScopedPlan(array $plan): bool
-    {
-        $rawScope = null;
-
-        foreach (['scope', 'scopeType', 'scope_type'] as $key) {
-            $value = $plan[$key] ?? null;
-
-            if ($value === null) {
-                continue;
-            }
-
-            if (is_string($value) || is_numeric($value)) {
-                $rawScope = strtolower(trim((string) $value));
-                if ($rawScope !== '') {
-                    break;
-                }
-            }
-        }
-
-        return $rawScope === 'store';
-    }
-
-    private function startTrialIfMissing(?string $businessId, ?string $storeId): void
-    {
-        if (!$businessId || !$storeId) {
-            $this->context->getLog()->warning('Unable to start trial: missing businessId or storeId.');
-            return;
-        }
-
-        $existingSubscription = $this->storeHasSubscription($businessId, $storeId);
-
-        if ($existingSubscription === null) {
-            $this->context->getLog()->warning(
-                sprintf(
-                    'Skipping free trial creation for business %s store %s: unable to determine existing subscriptions.',
-                    $businessId,
-                    $storeId
-                )
-            );
-
-            return;
-        }
-
-        if ($existingSubscription) {
-            $this->context->getLog()->info(
-                sprintf(
-                    'Subscription already exists for business %s store %s, skipping free trial.',
-                    $businessId,
-                    $storeId
-                )
-            );
-            return;
-        }
-
-        try {
-            $subscriptionId = $this->serviceFactory->subscription()->startFreeTrial($businessId, $storeId);
-            $this->context->getLog()->info(
-                sprintf(
-                    'Started free trial %s for business %s store %s.',
-                    $subscriptionId,
-                    $businessId,
-                    $storeId
-                )
-            );
-        } catch (Throwable $e) {
-            $this->context->getLog()->error(
-                sprintf(
-                    'Failed to start free trial for business %s store %s: %s',
-                    $businessId,
-                    $storeId,
-                    $e->getMessage()
-                )
-            );
-        }
     }
 
     private function gatherInitialResources(string $businessId): bool
@@ -1261,7 +603,7 @@ class CallbackService
             return false;
         }
 
-        return $this->runBusinessWorkflow($businessId, $storeId, $appToken, $merchantToken);
+        return $this->runBusinessWorkflow($businessId, $storeId);
     }
 
     /**
@@ -1439,211 +781,4 @@ class CallbackService
         );
     }
 
-    /**
-     * Determine whether the supplied subscription payload includes the given store ID.
-     *
-     * @param mixed $payload
-     * @param string $storeId
-     * @return array<int, array<mixed>>
-     */
-    private function filterSubscriptionsForStore(mixed $payload, string $storeId): array
-    {
-        if (!is_array($payload) || $payload === []) {
-            return [];
-        }
-
-        $normalized = $this->normalizeResourceItems($payload);
-        $matches = [];
-
-        foreach ($normalized['items'] as $subscription) {
-            if (!is_array($subscription)) {
-                continue;
-            }
-
-            $subscriptionStoreId = $this->resolveSubscriptionStoreId($subscription);
-
-            if ($subscriptionStoreId === $storeId) {
-                $matches[] = $subscription;
-            }
-        }
-
-        return $matches;
-    }
-
-    private function resolveSubscriptionStoreId(array $subscription): ?string
-    {
-        $directStoreId = $subscription['storeId'] ?? null;
-        if (is_string($directStoreId) && $directStoreId !== '') {
-            return $directStoreId;
-        }
-
-        $embeddedStore = $subscription['store'] ?? null;
-        if (is_array($embeddedStore)) {
-            $embeddedId = $embeddedStore['id'] ?? $embeddedStore['storeId'] ?? null;
-            if (is_string($embeddedId) && $embeddedId !== '') {
-                return $embeddedId;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>|null
-     */
-    private function getLocalSubscriptionsForStore(string $businessId, string $storeId): ?array
-    {
-        try {
-            $rows = $this->context->getConn()->fetchAllAssociative(
-                'SELECT subscription_id, plan_id, status FROM subscription WHERE business_id = ? AND store_id = ?',
-                [$businessId, $storeId]
-            );
-        } catch (Throwable $e) {
-            $this->context->getLog()->error(
-                sprintf(
-                    'Failed to load local subscriptions for business %s store %s: %s',
-                    $businessId,
-                    $storeId,
-                    $e->getMessage()
-                )
-            );
-
-            return null;
-        }
-
-        return is_array($rows) ? $rows : [];
-    }
-
-    /**
-     * @param array<int, array<mixed>> $remoteSubscriptions
-     * @param array<int, array<string, mixed>> $localSubscriptions
-     */
-    private function logSubscriptionComparison(
-        string $businessId,
-        string $storeId,
-        array $remoteSubscriptions,
-        array $localSubscriptions
-    ): void {
-        $remoteIds = $this->extractRemoteSubscriptionIds($remoteSubscriptions);
-        $localIds = $this->extractLocalSubscriptionIds($localSubscriptions);
-
-        sort($remoteIds);
-        sort($localIds);
-
-        if ($remoteIds === $localIds) {
-            $this->context->getLog()->debug(
-                sprintf(
-                    'Subscription comparison aligned for business %s store %s (%d subscription(s)).',
-                    $businessId,
-                    $storeId,
-                    count($remoteIds)
-                ),
-                [
-                    'businessId' => $businessId,
-                    'storeId' => $storeId,
-                    'remoteSubscriptionIds' => $remoteIds,
-                    'localSubscriptionIds' => $localIds,
-                ]
-            );
-
-            return;
-        }
-
-        $missingLocally = array_values(array_diff($remoteIds, $localIds));
-        if (!empty($missingLocally)) {
-            $this->context->getLog()->warning(
-                sprintf(
-                    'Remote subscription(s) missing locally for business %s store %s.',
-                    $businessId,
-                    $storeId
-                ),
-                [
-                    'businessId' => $businessId,
-                    'storeId' => $storeId,
-                    'remoteOnlySubscriptionIds' => $missingLocally,
-                ]
-            );
-        }
-
-        $missingRemotely = array_values(array_diff($localIds, $remoteIds));
-        if (!empty($missingRemotely)) {
-            $this->context->getLog()->warning(
-                sprintf(
-                    'Local subscription(s) missing from Poynt for business %s store %s.',
-                    $businessId,
-                    $storeId
-                ),
-                [
-                    'businessId' => $businessId,
-                    'storeId' => $storeId,
-                    'localOnlySubscriptionIds' => $missingRemotely,
-                ]
-            );
-        }
-    }
-
-    /**
-     * @param array<int, array<mixed>> $remoteSubscriptions
-     * @return array<int, string>
-     */
-    private function extractRemoteSubscriptionIds(array $remoteSubscriptions): array
-    {
-        $ids = [];
-
-        foreach ($remoteSubscriptions as $subscription) {
-            if (!is_array($subscription)) {
-                continue;
-            }
-
-            $id = $subscription['subscriptionId'] ?? null;
-
-            if (is_string($id) && $id !== '') {
-                $ids[] = $id;
-            }
-        }
-
-        return array_values(array_unique($ids));
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $localSubscriptions
-     * @return array<int, string>
-     */
-    private function extractLocalSubscriptionIds(array $localSubscriptions): array
-    {
-        $ids = [];
-
-        foreach ($localSubscriptions as $subscription) {
-            $id = $subscription['subscription_id'] ?? null;
-
-            if (is_string($id) && $id !== '') {
-                $ids[] = $id;
-            }
-        }
-
-        return array_values(array_unique($ids));
-    }
-
-    private function storeHasSubscription(string $businessId, string $storeId): ?bool
-    {
-        try {
-            $existing = $this->context->getConn()->fetchOne(
-                'SELECT 1 FROM subscription WHERE business_id = ? AND store_id = ? LIMIT 1',
-                [$businessId, $storeId]
-            );
-        } catch (Throwable $e) {
-            $this->context->getLog()->error(
-                sprintf(
-                    'Failed to verify existing subscription for business %s store %s: %s',
-                    $businessId,
-                    $storeId,
-                    $e->getMessage()
-                )
-            );
-
-            return null;
-        }
-
-        return $existing !== false && $existing !== null;
-    }
 }
