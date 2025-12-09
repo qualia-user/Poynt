@@ -122,41 +122,41 @@ class PoyntOAuthHandler implements OAuthHandlerInterface
         {
             $webhookService = new WebhookService($this->context, $this->businessId);
 
-            // 1) APPLICATION_SUBSCRIPTION_*
-            $webhookService->registerSubscriptionWebhooks($merchantToken);
+            // APPLICATION_SUBSCRIPTION_* hooks are registered separately via
+            // scripts/register_subscription_webhooks.php for production rollouts.
 
-            // 2) BUSINESS_USER_*
+            // BUSINESS_USER_*
             // TODO
             $webhookService->registerBusinessUserWebhooks($merchantToken);
 
-            // 3) CATALOG_*
+            // CATALOG_*
             $webhookService->registerCatalogWebhooks($merchantToken);
 
-            // 4) CATEGORY_*
+            // CATEGORY_*
             $webhookService->registerCategoryWebhooks($merchantToken);
 
-            // 5) INVENTORY_UPDATED (only one event under this prefix)
+            // INVENTORY_UPDATED (only one event under this prefix)
             $webhookService->registerInventoryWebhook($merchantToken);
 
-            // 6) ORDER_*
+            // ORDER_*
             $webhookService->registerOrderWebhooks($merchantToken);
 
-            // 7) ORDER_ITEM_*
+            // ORDER_ITEM_*
             $webhookService->registerOrderItemWebhooks($merchantToken);
 
-            // 8) PRODUCT_*
+            // PRODUCT_*
             $webhookService->registerProductWebhooks($merchantToken);
 
-            // 9) STORE_*
+            // STORE_*
             $webhookService->registerStoreWebhooks($merchantToken);
 
-            // 10) TAX_*
+            // TAX_*
             $webhookService->registerTaxWebhooks($merchantToken);
 
-            // 11) TRANSACTION_*
+            // TRANSACTION_*
             $webhookService->registerTransactionWebhooks($merchantToken);
 
-            // 12) USER_*
+            // USER_*
             // TODO
             $webhookService->registerUserWebhooks($merchantToken);
         }
