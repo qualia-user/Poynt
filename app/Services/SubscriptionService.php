@@ -11,6 +11,7 @@ use DateInterval;
 //use DateMalformedIntervalStringException;
 //use DateMalformedStringException;
 use DateTime;
+use DateTimeInterface;
 use DateTimeZone;
 use Exception;
 use InvalidArgumentException;
@@ -28,7 +29,7 @@ use function str_starts_with;
 class SubscriptionService
 {
     public const POYNT_BILLING_BASE = 'https://billing.poynt.net/organizations';
-    private const DEFAULT_TRIAL_DAYS = 14;
+    public const DEFAULT_TRIAL_DAYS = 14;
     private Context $context;
     private ClientInterface $http;
     private ?string $businessId = null;
@@ -297,13 +298,15 @@ class SubscriptionService
      * @param string $businessId Poynt business ID
      * @param string $storeId Poynt store ID
      * @param string $trialPlanId Your local “free trial” plan identifier (e.g. "free_trial")
+     * @param DateTimeInterface|null $trialEndsAt Optional trial end timestamp (UTC)
      *
      * @return string  The generated subscription_id (UUID)
      */
     public function startFreeTrial(
         string $businessId,
         string $storeId,
-        string $trialPlanId = 'free_trial'
+        string $trialPlanId = 'free_trial',
+        ?DateTimeInterface $trialEndsAt = null
     ): string {
         // 1) Generate a new UUID for subscription_id
         $subscriptionId = Uuid::uuid4()->toString();
@@ -311,7 +314,9 @@ class SubscriptionService
         // 2) Compute trial start/end timestamps (UTC)
         $trialDays = self::DEFAULT_TRIAL_DAYS;
         $now = new DateTime('now', new DateTimeZone('UTC'));
-        $trialEnd = (clone $now)->add(new DateInterval("P{$trialDays}D"));
+        $trialEnd = $trialEndsAt instanceof DateTimeInterface
+            ? new DateTime($trialEndsAt->format('Y-m-d H:i:sP'), new DateTimeZone('UTC'))
+            : (clone $now)->add(new DateInterval("P{$trialDays}D"));
 
         // 3) Insert into local subscription table as “trial”
         $sql = <<<SQL

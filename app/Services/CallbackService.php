@@ -8,6 +8,12 @@ use App\Modules\OAuth\PlatformRegistry;
 use App\Modules\OAuth\OAuthHandlerInterface;
 use App\Services\Tenant\TenantProvisioningService;
 use App\Services\BusinessService;
+use App\Services\SubscriptionService;
+use App\Services\Support\PoyntDataFormatter as Format;
+use DateInterval;
+use DateTimeImmutable;
+use DateTimeInterface;
+use DateTimeZone;
 use RuntimeException;
 use Throwable;
 
@@ -247,14 +253,15 @@ class CallbackService
                 ]
             );
 
-//            $this->upsertBusinessRecord($businessId);
+            $trialExpiresAt = $this->bootstrapBusinessTrial($businessId, $storeId);
 
             if (!$this->synchronizeStoresAndSubscriptions(
                 $businessId,
                 $appAccessToken,
                 $merchantAccessToken,
                 $requestedPlanId,
-                $requestedPlanName
+                $requestedPlanName,
+                $trialExpiresAt
             )) {
                 throw new RuntimeException(
                     sprintf('Failed to synchronize stores or subscriptions for business %s.', $businessId)
@@ -333,6 +340,53 @@ class CallbackService
         $this->context->getLog()->info(
             sprintf('CallbackService::runBusinessWorkflow upserted business %s.', $businessId)
         );
+    }
+
+    private function bootstrapBusinessTrial(string $businessId, ?string $storeId): ?DateTimeImmutable
+    {
+        /** @var BusinessService $businessService */
+        $businessService = $this->serviceFactory->business($businessId);
+        $trialState = $businessService->getTrialState($businessId);
+        $existingExpiry = $this->normalizeTrialExpiry($trialState['expiresAt'] ?? null);
+
+        if ($existingExpiry !== null) {
+            return $existingExpiry;
+        }
+
+        $trialExpiry = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+            ->add(new DateInterval(sprintf('P%dD', SubscriptionService::DEFAULT_TRIAL_DAYS)));
+
+        $payload = $businessService->fetchBusiness($businessId);
+        if (!is_array($payload)) {
+            $this->context->getLog()->warning(
+                sprintf('Using fallback business payload while initializing trial for %s.', $businessId)
+            );
+
+            $payload = [
+                'id' => $businessId,
+                'legalName' => $businessId,
+            ];
+        }
+
+        $payload['trialEligible'] = true;
+        $payload['trialExpiresAt'] = $trialExpiry;
+
+        if (!$businessService->upsert($payload)) {
+            throw new RuntimeException(
+                sprintf('Failed to upsert business %s while initializing trial window.', $businessId)
+            );
+        }
+
+        $this->recordPlanDecision(
+            $businessId,
+            $storeId,
+            'free_trial',
+            'CallbackService',
+            'Initialized business-level trial window.',
+            ['trialExpiresAt' => $trialExpiry->format(DateTimeInterface::ATOM)]
+        );
+
+        return $trialExpiry;
     }
 
     private function logWorkflowFailureRootCause(?string $businessId, Throwable $exception): void
@@ -451,7 +505,8 @@ class CallbackService
         ?string $appAccessToken,
         ?string $merchantAccessToken,
         ?string $requestedPlanId,
-        ?string $requestedPlanName
+        ?string $requestedPlanName,
+        ?DateTimeImmutable $businessTrialExpiresAt
     ): bool {
         $storeService = $this->serviceFactory->store($businessId);
         $storesPayload = $storeService->fetchByBusinessId($businessId);
@@ -520,7 +575,8 @@ class CallbackService
                 $storeId,
                 $appAccessToken,
                 $merchantAccessToken,
-                $planId
+                $planId,
+                $businessTrialExpiresAt
             )) {
                 return false;
             }
@@ -534,7 +590,8 @@ class CallbackService
         string $storeId,
         ?string $appAccessToken,
         ?string $merchantAccessToken,
-        ?string $defaultPlanId
+        ?string $defaultPlanId,
+        ?DateTimeImmutable $businessTrialExpiresAt
     ): bool {
         $subscriptionService = $this->serviceFactory->subscription($businessId, $storeId);
 
@@ -568,12 +625,87 @@ class CallbackService
             $localSubscriptions
         );
 
-        if (!empty($matchingSubscriptions)) {
+        $trialExpiry = $businessTrialExpiresAt;
+        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $trialActive = $trialExpiry !== null && $trialExpiry > $now;
+        $trialExpired = $trialExpiry !== null && $trialExpiry <= $now;
+
+        if (!empty($matchingSubscriptions) || !empty($localSubscriptions)) {
+            if ($trialActive) {
+                $planId = $this->resolvePlanIdFromSubscriptions($matchingSubscriptions, $localSubscriptions) ?? 'free_trial';
+                $this->recordPlanDecision(
+                    $businessId,
+                    $storeId,
+                    $planId,
+                    'CallbackService',
+                    'Business trial active; retaining existing subscription.',
+                    ['trialExpiresAt' => $trialExpiry?->format(DateTimeInterface::ATOM)]
+                );
+            }
+
             return true;
         }
 
-        if (!empty($localSubscriptions)) {
+        if ($trialActive) {
+            try {
+                $subscriptionId = $subscriptionService->startFreeTrial($businessId, $storeId, 'free_trial', $trialExpiry);
+                $this->recordPlanDecision(
+                    $businessId,
+                    $storeId,
+                    'free_trial',
+                    'CallbackService',
+                    'Business trial active; assigning free trial plan to store.',
+                    ['subscriptionId' => $subscriptionId, 'trialExpiresAt' => $trialExpiry->format(DateTimeInterface::ATOM)]
+                );
+            } catch (Throwable $e) {
+                $this->context->getLog()->error(
+                    sprintf(
+                        'Failed to start business-aligned free trial for business %s store %s: %s',
+                        $businessId,
+                        $storeId,
+                        $e->getMessage()
+                    )
+                );
+
+                return false;
+            }
+
             return true;
+        }
+
+        if ($trialExpired) {
+            $this->recordPlanDecision(
+                $businessId,
+                $storeId,
+                $defaultPlanId ?? 'none',
+                'CallbackService',
+                'Business trial expired; blocking until paid plan is provided.',
+                ['trialExpiresAt' => $trialExpiry->format(DateTimeInterface::ATOM)]
+            );
+
+            if (!$defaultPlanId) {
+                $this->context->getLog()->warning(
+                    sprintf(
+                        'Business %s store %s cannot continue: trial expired and no plan specified.',
+                        $businessId,
+                        $storeId
+                    )
+                );
+
+                return false;
+            }
+        }
+
+        if ($trialExpired && (!$appAccessToken || !$merchantAccessToken)) {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'Business %s store %s cannot create paid subscription: tokens missing after trial expiry.',
+                    $businessId,
+                    $storeId
+                )
+            );
+
+            return false;
         }
 
         if (!$appAccessToken || !$merchantAccessToken || !$defaultPlanId) {
@@ -586,7 +718,7 @@ class CallbackService
             );
 
             try {
-                $fallbackSubscriptionId = $subscriptionService->startFreeTrial($businessId, $storeId);
+                $fallbackSubscriptionId = $subscriptionService->startFreeTrial($businessId, $storeId, 'free_trial', $trialExpiry);
                 $this->context->getLog()->info(
                     sprintf(
                         'Started local free trial %s for business %s store %s as a fallback.',
@@ -621,6 +753,78 @@ class CallbackService
         );
 
         return $created !== [];
+    }
+
+    private function resolvePlanIdFromSubscriptions(array $remoteSubscriptions, array $localSubscriptions): ?string
+    {
+        foreach ([$remoteSubscriptions, $localSubscriptions] as $collection) {
+            foreach ($collection as $subscription) {
+                if (!is_array($subscription)) {
+                    continue;
+                }
+
+                $planId = $subscription['planId'] ?? $subscription['plan_id'] ?? null;
+                if (is_string($planId) && trim($planId) !== '') {
+                    return $planId;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function recordPlanDecision(
+        string $businessId,
+        ?string $storeId,
+        string $planId,
+        string $actor,
+        string $reason,
+        array $metadata = []
+    ): void {
+        try {
+            $this->context->getConn()->insert(
+                'subscription_plan_audit',
+                [
+                    'business_id' => $businessId,
+                    'store_id' => $storeId,
+                    'plan_id' => $planId,
+                    'decided_by' => $actor,
+                    'decision_reason' => $reason,
+                    'metadata' => Format::jsonObject($metadata),
+                ]
+            );
+        } catch (Throwable $e) {
+            $this->context->getLog()->warning(
+                sprintf(
+                    'Failed to record subscription decision for business %s store %s: %s',
+                    $businessId,
+                    $storeId ?? 'n/a',
+                    $e->getMessage()
+                )
+            );
+        }
+    }
+
+    private function normalizeTrialExpiry(mixed $value): ?DateTimeImmutable
+    {
+        if ($value instanceof DateTimeInterface) {
+            return DateTimeImmutable::createFromInterface($value);
+        }
+
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            if ($trimmed === '') {
+                return null;
+            }
+
+            try {
+                return new DateTimeImmutable($trimmed);
+            } catch (Throwable) {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     private function normalizePlanParameter(mixed $value): ?string

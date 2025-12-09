@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS business (
     metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    active BOOLEAN NOT NULL DEFAULT FALSE
+    active BOOLEAN NOT NULL DEFAULT FALSE,
+    initial_gathering BOOLEAN NOT NULL DEFAULT FALSE,
+    trial_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+    trial_expires_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS store (
@@ -66,6 +69,19 @@ CREATE TABLE IF NOT EXISTS subscription (
 );
 CREATE INDEX IF NOT EXISTS idx_subscription_current_period_end ON subscription (current_period_end);
 CREATE INDEX IF NOT EXISTS idx_subscription_store_status ON subscription (store_id, status);
+
+CREATE TABLE IF NOT EXISTS subscription_plan_audit (
+    id SERIAL PRIMARY KEY,
+    business_id VARCHAR(255) NOT NULL,
+    store_id VARCHAR(255),
+    plan_id VARCHAR(255) NOT NULL,
+    decided_by VARCHAR(255) NOT NULL,
+    decision_reason TEXT NOT NULL,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_subscription_plan_audit_business ON subscription_plan_audit (business_id);
+CREATE INDEX IF NOT EXISTS idx_subscription_plan_audit_store ON subscription_plan_audit (store_id);
 
 CREATE TABLE IF NOT EXISTS webhook_audit (
     id SERIAL PRIMARY KEY,

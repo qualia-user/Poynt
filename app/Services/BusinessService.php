@@ -8,6 +8,7 @@ use App\Services\Support\PoyntDataFormatter as Format;
 use App\Services\Support\TableNamer;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
+use DateTimeInterface;
 
 class BusinessService {
 
@@ -35,6 +36,8 @@ class BusinessService {
      *                             - 'businessId' (string),
      *                             - 'storeId'    (string),
      *                             - 'name'       (string),
+     *                             - 'trialEligible' (bool, optional),
+     *                             - 'trialExpiresAt' (DateTimeInterface|string, optional)
      *
      * @return bool  True on success, false on failure.
      */
@@ -54,6 +57,9 @@ class BusinessService {
         // 1.a) Decide on "active". If the payload does not include it, default to true.
         $active = !isset($businessData['active']) || (bool)$businessData['active'];
 
+        $trialEligible = $businessData['trialEligible'] ?? null;
+        $trialExpiresAt = $this->normalizeTrialExpiry($businessData['trialExpiresAt'] ?? null);
+
         // 2) Prepare the full payload as JSON for the metadata column
         $metadata = Format::jsonObject($businessData);
 
@@ -67,33 +73,40 @@ class BusinessService {
                 [$businessId]
             );
 
+            $insertPayload = [
+                'business_id' => $businessId,
+                'name' => $name,
+                'metadata' => $metadata,
+                'created_at' => $now,
+                'updated_at' => $now,
+                'active' => $active,
+            ];
+
+            $updatePayload = [
+                'name' => $name,
+                'metadata' => $metadata,
+                'updated_at' => $now,
+                'active' => $active,
+            ];
+
+            if ($trialEligible !== null) {
+                $insertPayload['trial_eligible'] = (bool) $trialEligible;
+                $updatePayload['trial_eligible'] = (bool) $trialEligible;
+            }
+
+            if ($trialExpiresAt !== null) {
+                $insertPayload['trial_expires_at'] = $trialExpiresAt;
+                $updatePayload['trial_expires_at'] = $trialExpiresAt;
+            }
+
             if ($existing) {
                 // 5a) UPDATE path (include 'active' here)
-                $this->context->getConn()->update(
-                    'business',
-                    [
-                        'name' => $name,
-                        'metadata' => $metadata,
-                        'updated_at' => $now,
-                        'active' => $active,
-                    ],
-                    ['business_id' => $businessId]
-                );
+                $this->context->getConn()->update('business', $updatePayload, ['business_id' => $businessId]);
 
                 $this->context->getLog()->info("BusinessService::upsert: updated business {$businessId}");
             } else {
                 // 5b) INSERT path (include 'active' here, too)
-                $this->context->getConn()->insert(
-                    'business',
-                    [
-                        'business_id' => $businessId,
-                        'name' => $name,
-                        'metadata' => $metadata,
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                        'active' => $active,
-                    ]
-                );
+                $this->context->getConn()->insert('business', $insertPayload);
 
                 $this->context->getLog()->info("BusinessService::upsert: inserted new business {$businessId}");
             }
@@ -253,6 +266,95 @@ class BusinessService {
 
         return false;
 
+    }
+
+    public function getTrialState(?string $businessId = null): array
+    {
+        if ($businessId === null) {
+            $businessId = $this->businessId;
+        }
+
+        if (!$businessId) {
+            return [
+                'eligible' => false,
+                'expiresAt' => null,
+            ];
+        }
+
+        $sql = 'SELECT trial_eligible, trial_expires_at FROM business WHERE business_id = ? ORDER BY updated_at DESC LIMIT 1';
+
+        try {
+            $row = $this->context->getConn()->fetchAssociative($sql, [$businessId]);
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('BusinessService::getTrialState failed for business %s: %s', $businessId, $e->getMessage())
+            );
+
+            return [
+                'eligible' => false,
+                'expiresAt' => null,
+            ];
+        }
+
+        if (!$row) {
+            return [
+                'eligible' => false,
+                'expiresAt' => null,
+            ];
+        }
+
+        return [
+            'eligible' => (bool) ($row['trial_eligible'] ?? false),
+            'expiresAt' => $row['trial_expires_at'] ?? null,
+        ];
+    }
+
+    public function setTrialWindow(string $businessId, bool $eligible, ?DateTimeInterface $expiresAt): bool
+    {
+        $normalizedExpiry = $this->normalizeTrialExpiry($expiresAt);
+
+        try {
+            $updated = $this->context->getConn()->executeStatement(
+                'UPDATE business SET trial_eligible = :eligible, trial_expires_at = :expires, updated_at = NOW() WHERE business_id = :business',
+                [
+                    'eligible' => $eligible,
+                    'expires' => $normalizedExpiry,
+                    'business' => $businessId,
+                ]
+            );
+
+            return $updated > 0;
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error(
+                sprintf('BusinessService::setTrialWindow failed for business %s: %s', $businessId, $e->getMessage())
+            );
+
+            return false;
+        }
+    }
+
+    private function normalizeTrialExpiry(mixed $value): ?string
+    {
+        if ($value instanceof DateTimeInterface) {
+            return $value->format('Y-m-d H:i:sP');
+        }
+
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            if ($trimmed === '') {
+                return null;
+            }
+
+            try {
+                $date = new \DateTime($trimmed);
+
+                return $date->format('Y-m-d H:i:sP');
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        return null;
     }
 
 
