@@ -195,8 +195,6 @@ class CallbackService
             [
                 'businessId' => $businessId,
                 'storeId' => $storeId,
-                'requestedPlanId' => $requestedPlanId,
-                'requestedPlanName' => $requestedPlanName,
             ]
         );
 
