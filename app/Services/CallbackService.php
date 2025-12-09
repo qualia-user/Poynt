@@ -445,6 +445,33 @@ class CallbackService
         }
     }
 
+    /**
+     * Pull the authoritative list of stores for a business and guarantee each store has at
+     * least one subscription record.
+     *
+     * Workflow
+     * --------
+     * 1. Fetch the remote stores for the business and skip further work when none exist.
+     * 2. Normalize the payload (the API can return either a keyed array or an `items` list)
+     *    and ensure each store document includes `businessId` before persisting it locally.
+     * 3. Determine the subscription plan to use: honor an explicitly requested plan ID, then
+     *    attempt to resolve a plan by name, and finally fall back to the platform's default
+     *    plan when available.
+     * 4. For each store, upsert its record and reconcile subscriptions by:
+     *    - Importing existing merchant subscriptions when a merchant token is present.
+     *    - Short-circuiting if we already see a subscription locally or remotely.
+     *    - Creating a platform subscription with the app token, or starting a local free
+     *      trial when creation is not possible.
+     *
+     * Tokens and resilience
+     * ---------------------
+     * - The app token unlocks plan discovery and subscription creation; without it, the logic
+     *   relies on whatever is already present or a locally tracked trial.
+     * - The merchant token is used to pull down existing subscriptions so the system avoids
+     *   creating duplicates.
+     * - Any failure to fetch stores, plans, or subscriptions results in a `false` return to
+     *   signal the surrounding transaction in runBusinessWorkflow() to roll back.
+     */
     private function synchronizeStoresAndSubscriptions(
         string $businessId,
         ?string $appAccessToken,
@@ -452,6 +479,18 @@ class CallbackService
         ?string $requestedPlanId,
         ?string $requestedPlanName
     ): bool {
+        // This method is invoked during runBusinessWorkflow() after tokens are available and
+        // the installation (or trial) is prepared. It performs two tightly coupled tasks:
+        //   1) Mirror the external store list into local storage.
+        //   2) Ensure each store has at least one active subscription, creating one when
+        //      possible or falling back to a local trial.
+        //
+        // Access tokens influence the available behavior: the app token is required to look up
+        // plan definitions and create subscriptions against the platform API, while the merchant
+        // token allows us to read existing subscriptions tied to the merchant account. If either
+        // token is missing, the logic still attempts a best-effort sync by persisting stores and
+        // starting a local free trial when it cannot provision a real subscription.
+
         $storeService = $this->serviceFactory->store($businessId);
         $storesPayload = $storeService->fetchByBusinessId($businessId);
 
