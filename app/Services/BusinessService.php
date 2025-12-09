@@ -55,10 +55,10 @@ class BusinessService {
         $name = $businessData['legalName'];
 
         // 1.a) Decide on "active". If the payload does not include it, default to true.
-        $active = !isset($businessData['active']) || (bool)$businessData['active'];
+        $active = ($businessData['status'] ?? null) === 'ACTIVATED';
 
-        $trialEligible = $businessData['trialEligible'] ?? null;
-        $trialExpiresAt = $this->normalizeTrialExpiry($businessData['trialExpiresAt'] ?? null);
+        $trialEligible = $businessData['trialEligible'] ?? true;
+        $trialExpiresAt = $this->normalizeTrialExpiry($businessData['trialExpiresAt'] ?? $this->returnDefaultTrialDate());
 
         // 2) Prepare the full payload as JSON for the metadata column
         $metadata = Format::jsonObject($businessData);
@@ -69,7 +69,7 @@ class BusinessService {
         try {
             // 4) See if a business row with this business_id already exists
             $existing = $this->context->getConn()->fetchAssociative(
-                'SELECT business_id FROM business WHERE business_id = ? AND active = TRUE ORDER BY updated_at DESC LIMIT 1',
+                'SELECT business_id FROM business WHERE business_id = ? ORDER BY updated_at DESC LIMIT 1',
                 [$businessId]
             );
 
@@ -119,6 +119,14 @@ class BusinessService {
             );
             return false;
         }
+    }
+
+    /**
+     * @return string
+     */
+    public function returnDefaultTrialDate(): string
+    {
+        return (new \DateTimeImmutable('now'))->modify('+' . SubscriptionService::DEFAULT_TRIAL_DAYS . ' days')->format('Y-m-d H:i:s');
     }
 
     /**

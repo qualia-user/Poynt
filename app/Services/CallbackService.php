@@ -427,7 +427,7 @@ class CallbackService
     {
         try {
             $existing = $this->context->getConn()->fetchOne(
-                'SELECT 1 FROM business WHERE business_id = ? AND active = TRUE ORDER BY updated_at DESC LIMIT 1',
+                'SELECT 1 FROM business WHERE business_id = ? ORDER BY updated_at DESC LIMIT 1',
                 [$businessId]
             );
         } catch (Throwable $e) {
@@ -444,7 +444,7 @@ class CallbackService
     private function reactivateInstallation(string $businessId): void
     {
         $this->markBusinessActive($businessId);
-        $this->reactivateLocalSubscriptions($businessId);
+//        $this->reactivateLocalSubscriptions($businessId);
     }
 
     private function markBusinessActive(string $businessId): void
