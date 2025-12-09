@@ -219,13 +219,23 @@ class Provisioner
                 [ParameterType::STRING]
             );
 
+            $this->conn->executeStatement(
+                'UPDATE subscription SET status = ? WHERE business_id = ?',
+                ['INACTIVE', $tenantId],
+                [ParameterType::STRING]
+            );
+
             $this->conn->commit();
 
             $this->context->getLog()->info(
                 'Provisioner::drop: tenant tables dropped',
                 [
-                    'businessId' => $tenantId,
-                    'templateVersion' => self::TEMPLATE_VERSION,
+                    'log_scope' => 'shared',
+                    'type' => 'maintenance',
+                    'details' => [
+                        'businessId' => $businessId,
+                        'templateVersion' => self::TEMPLATE_VERSION,
+                    ],
                 ]
             );
 

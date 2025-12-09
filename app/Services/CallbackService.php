@@ -228,12 +228,13 @@ class CallbackService
                     sprintf('Existing installation detected for business %s, reactivating.', $businessId)
                 );
                 $this->reactivateInstallation($businessId);
-            } else {
-                $this->context->getLog()->info(
-                    sprintf('No existing installation found for business %s, attempting trial start if necessary.', $businessId)
-                );
-                $this->startTrialIfMissing($businessId, $storeId);
             }
+//            else {
+//                $this->context->getLog()->info(
+//                    sprintf('No existing installation found for business %s, attempting trial start if necessary.', $businessId)
+//                );
+//                $this->startTrialIfMissing($businessId, $storeId);
+//            }
 
             $appAccessToken = $this->extractAccessToken($appToken);
             $merchantAccessToken = $this->extractAccessToken($merchantToken);
@@ -260,6 +261,7 @@ class CallbackService
                 );
             }
 
+//            $conn->commit(); // TODO REMOVE!!
             $this->context->getLog()->info(
                 sprintf('CallbackService::runBusinessWorkflow completed store/subscription sync for business %s.', $businessId)
             );
