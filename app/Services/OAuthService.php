@@ -92,10 +92,11 @@ class OAuthService {
     /**
      * @param string $authCode
      * @param string $redirectUri
+     * @param string|null $appAccessToken
      * @return mixed|void|null
      * @throws GuzzleException
      */
-    public function exchangeAuthCodeForMerchantToken(string $authCode, string $redirectUri)
+    public function exchangeAuthCodeForMerchantToken(string $authCode, string $redirectUri, ?string $appAccessToken = null)
     {
         // 1. Load private key
         $basePath = dirname(__DIR__, 2);
@@ -128,11 +129,13 @@ class OAuthService {
 
         // 3. Send POST request to exchange code for Merchant Access Token
         try {
+            $authorizationToken = $appAccessToken ?? $jwt;
+
             $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
                 'headers' => [
                     'Content-Type'  => 'application/x-www-form-urlencoded',
                     'api-version'   => '1.2',
-                    'Authorization' => 'Bearer ' . $jwt,
+                    'Authorization' => 'Bearer ' . $authorizationToken,
                 ],
                 'form_params' => [
                     'grant_type'   => 'authorization_code',
