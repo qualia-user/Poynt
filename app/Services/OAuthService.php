@@ -134,18 +134,17 @@ class OAuthService {
      */
     public function exchangeAuthCodeForMerchantToken(
         string $authCode,
-        string $redirectUri,
-        ?string $appAccessToken = null
+        string $redirectUri
     ): ?array {
         try {
-            $authorizationToken = $this->resolveAuthorizationCodeToken($appAccessToken);
-
+//            $authorizationToken = $this->resolveAuthorizationCodeToken($appAccessToken);
+            $jwt = $this->generateSelfSignedJwt();
             $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
                 'headers' => [
                     'Accept'        => 'application/json',
                     'Content-Type'  => 'application/x-www-form-urlencoded',
                     'api-version'   => '1.2',
-                    'Authorization' => 'Bearer ' . $authorizationToken,
+                    'Authorization' => 'Bearer ' . $jwt,
                 ],
                 'form_params' => [
                     'grant_type'   => 'authorization_code',

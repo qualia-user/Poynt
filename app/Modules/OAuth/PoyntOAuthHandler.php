@@ -76,8 +76,7 @@ class PoyntOAuthHandler implements OAuthHandlerInterface
         try {
             $merchantAccessToken = $oauthService->exchangeAuthCodeForMerchantToken(
                 $code,
-                ConfigApp::$redirectUri,
-                is_array($appAccessToken) ? ($appAccessToken['accessToken'] ?? null) : null
+                ConfigApp::$redirectUri
             );
         } catch (\Exception $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
