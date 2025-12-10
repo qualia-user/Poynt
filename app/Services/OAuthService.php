@@ -71,8 +71,9 @@ class OAuthService {
                     'Content-Type' => 'application/x-www-form-urlencoded',
                 ],
                 'form_params' => [
-                    'grantType' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                    'assertion' => $jwt,
+                    // Poynt expects standard OAuth2 parameter naming
+                    'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                    'assertion'  => $jwt,
                 ],
             ]);
 
