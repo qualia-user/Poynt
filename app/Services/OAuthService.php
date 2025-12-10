@@ -138,15 +138,14 @@ class OAuthService {
         ?string $appAccessToken = null
     ): ?array {
         try {
-            $jwt = $this->resolveAuthorizationCodeToken($appAccessToken);
+            $authorizationToken = $this->resolveAuthorizationCodeToken($appAccessToken);
 
-            // 2. POST na /token s grant_type=authorization_code
             $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
                 'headers' => [
-                    'Accept'       => 'application/json',
-                    'Content-Type' => 'application/x-www-form-urlencoded',
-                    'api-version'  => '1.2',
-                    'Authorization'=> 'Bearer ' . $jwt, // self-signed JWT
+                    'Accept'        => 'application/json',
+                    'Content-Type'  => 'application/x-www-form-urlencoded',
+                    'api-version'   => '1.2',
+                    'Authorization' => 'Bearer ' . $authorizationToken,
                 ],
                 'form_params' => [
                     'grant_type'   => 'authorization_code',
