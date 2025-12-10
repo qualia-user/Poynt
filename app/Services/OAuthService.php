@@ -93,7 +93,7 @@ class OAuthService {
     /**
      * @param string $authCode
      * @param string $redirectUri
-     * @param string|null $appAccessToken
+     * @param string|null $appAccessToken Optional pre-fetched app token (retained for API compatibility).
      * @return mixed|void|null
      * @throws GuzzleException
      */
@@ -130,7 +130,11 @@ class OAuthService {
 
         // 3. Send POST request to exchange code for Merchant Access Token
         try {
-            $authorizationToken = $appAccessToken ?? $jwt;
+            // The authorization_code grant must be authorized by an application issuer.
+            // Using the self-signed JWT ensures the issuer is `urn:aid:<APP_ID>` instead
+            // of a previously issued token (issuer `https://services.poynt.net`) that
+            // would be rejected with INVALID_PARAMETER.
+            $authorizationToken = $jwt;
 
             $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
                 'headers' => [
