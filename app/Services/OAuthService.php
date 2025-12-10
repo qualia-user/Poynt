@@ -285,61 +285,14 @@ class OAuthService {
 
     private function resolveAuthorizationCodeToken(?string $appAccessToken): string
     {
-        $expectedIssuer = 'urn:aid:' . ConfigApp::$appId;
-
         if ($appAccessToken !== null) {
-            $issuer = $this->extractIssuerFromJwt($appAccessToken);
-
-            if ($issuer === $expectedIssuer) {
-                return $appAccessToken;
-            }
-
-            $logMessage = $issuer === null
-                ? 'Unable to determine issuer for provided app access token; using self-signed JWT for authorization_code grant.'
-                : sprintf(
-                    'Ignoring app access token issued by %s; using self-signed JWT for authorization_code grant.',
-                    $issuer
-                );
-
-            $this->context->getLog()->info($logMessage);
+            return $appAccessToken;
         }
+
+        $this->context->getLog()->info('App access token missing; using self-signed JWT for authorization_code grant.');
 
         return $this->generateSelfSignedJwt();
     }
 
-
-    private function extractIssuerFromJwt(string $jwt): ?string
-    {
-        $segments = explode('.', $jwt);
-
-        if (count($segments) < 2) {
-            return null;
-        }
-
-        $payload = $this->base64UrlDecode($segments[1]);
-        if ($payload === false) {
-            return null;
-        }
-
-        $claims = json_decode($payload, true);
-
-        if (!is_array($claims) || !isset($claims['iss'])) {
-            return null;
-        }
-
-        return (string) $claims['iss'];
-    }
-
-
-    private function base64UrlDecode(string $data): string|false
-    {
-        $padding = strlen($data) % 4;
-
-        if ($padding > 0) {
-            $data .= str_repeat('=', 4 - $padding);
-        }
-
-        return base64_decode(strtr($data, '-_', '+/'));
-    }
 }
 
