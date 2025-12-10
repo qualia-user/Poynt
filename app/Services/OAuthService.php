@@ -134,11 +134,12 @@ class OAuthService {
      */
     public function exchangeAuthCodeForMerchantToken(
         string $authCode,
-        string $redirectUri
+        string $redirectUri,
+        ?string $appAccessToken = null
     ): ?array {
         try {
             // 1. Self-signed JWT
-            $jwt = $this->generateSelfSignedJwt();
+            $jwt = $appAccessToken ?? $this->generateSelfSignedJwt();
 
             // 2. POST na /token s grant_type=authorization_code
             $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
@@ -151,7 +152,7 @@ class OAuthService {
                 'form_params' => [
                     'grant_type'   => 'authorization_code',
                     'redirect_uri' => $redirectUri,
-                    'client_id'    => ConfigApp::$appId,
+                    'client_id'    => 'urn:aid:' . ConfigApp::$appId,
                     'code'         => $authCode,
                 ],
             ]);
