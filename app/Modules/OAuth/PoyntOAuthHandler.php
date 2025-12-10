@@ -74,7 +74,11 @@ class PoyntOAuthHandler implements OAuthHandlerInterface
         }
 
         try {
-            $merchantAccessToken = $oauthService->exchangeAuthCodeForMerchantToken($code, ConfigApp::$redirectUri);
+            $merchantAccessToken = $oauthService->exchangeAuthCodeForMerchantToken(
+                $code,
+                ConfigApp::$redirectUri,
+                is_array($appAccessToken) ? ($appAccessToken['accessToken'] ?? null) : null
+            );
         } catch (\Exception $e) {
             $this->context->getLog()->error("Error: " . $e->getMessage());
             return [
@@ -229,7 +233,13 @@ class PoyntOAuthHandler implements OAuthHandlerInterface
 
         try {
             $oauthService = new OAuthService($this->context);
-            $token = $oauthService->exchangeAuthCodeForMerchantToken($code, ConfigApp::$redirectUri);
+            $appAccessToken = $oauthService->exchangeJwtForToken();
+
+            $token = $oauthService->exchangeAuthCodeForMerchantToken(
+                $code,
+                ConfigApp::$redirectUri,
+                is_array($appAccessToken) ? ($appAccessToken['accessToken'] ?? null) : null
+            );
             return [
                 'success' => true,
                 'data' => $token,
