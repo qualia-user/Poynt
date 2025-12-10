@@ -118,13 +118,13 @@ class CallbackService
 
         $businessService = $this->serviceFactory->business($businessId);
 
-        if (!$this->syncResourceCollection($businessId, $businessService, get_class($businessService))) {
-            $this->context->getLog()->warning(
-                sprintf('CallbackService::prepareTenantStorage failed to sync business record for %s.', $businessId)
-            );
-
-            return false;
-        }
+//        if (!$this->syncResourceCollection($businessId, $businessService, get_class($businessService))) {
+//            $this->context->getLog()->warning(
+//                sprintf('CallbackService::prepareTenantStorage failed to sync business record for %s.', $businessId)
+//            );
+//
+//            return false;
+//        }
 
         return true;
     }
@@ -660,6 +660,8 @@ class CallbackService
             $conn->executeStatement('DELETE FROM tenant_table_registry WHERE business_id = :biz', ['biz' => $businessId]);
             $conn->executeStatement('DELETE FROM tenant_schema_version WHERE tenant_id = :biz', ['biz' => $businessId]);
             $conn->executeStatement('DELETE FROM business WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM app_token WHERE business_id = :biz', ['biz' => $businessId]);
+            $conn->executeStatement('DELETE FROM merchant_token WHERE business_id = :biz', ['biz' => $businessId]);
 
             $conn->commit();
         } catch (Throwable $e) {

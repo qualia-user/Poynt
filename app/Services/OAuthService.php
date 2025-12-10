@@ -61,6 +61,9 @@ class OAuthService {
         ];
         $jwt = JWT::encode($jwtPayload, $privateKey, self::JWT_SIGNING_ALGORITHM);
 
+        // 1. Self-signed JWT
+        $jwt = $this->generateSelfSignedJwt();
+
         // 2. Send token exchange request
         try {
             $responseData = [];
@@ -90,14 +93,93 @@ class OAuthService {
         return $responseData;
     }
 
+
+
+    private function generateSelfSignedJwt(): string
+    {
+        $basePath = dirname(__DIR__, 2);
+        $privateKeyPath = $basePath . DIRECTORY_SEPARATOR . 'private-key.pem';
+
+        if (!is_readable($privateKeyPath)) {
+            $this->context->getLog()->error('Private key file not found or not readable: ' . $privateKeyPath);
+            throw new \RuntimeException('Private key file not found');
+        }
+
+        $privateKey = file_get_contents($privateKeyPath);
+        if ($privateKey === false) {
+            $this->context->getLog()->error('Failed to read private key file: ' . $privateKeyPath);
+            throw new \RuntimeException('Failed to read private key');
+        }
+
+        $now   = time();
+        $appUrn = 'urn:aid:' . ConfigApp::$appId;
+
+        $jwtPayload = [
+            'exp' => $now + self::JWT_EXPIRATION_TIME, // npr. 300 ili 600 sekundi
+            'iat' => $now,
+            'iss' => $appUrn,
+            'sub' => $appUrn,
+            'aud' => self::POYNT_AUDIENCE,
+            'jti' => Uuid::uuid4()->toString(),
+        ];
+
+        return JWT::encode($jwtPayload, $privateKey, self::JWT_SIGNING_ALGORITHM);
+    }
+
     /**
      * @param string $authCode
      * @param string $redirectUri
-     * @param string|null $appAccessToken Optional pre-fetched app token (retained for API compatibility).
      * @return mixed|void|null
      * @throws GuzzleException
      */
-    public function exchangeAuthCodeForMerchantToken(string $authCode, string $redirectUri, ?string $appAccessToken = null)
+    public function exchangeAuthCodeForMerchantToken(
+        string $authCode,
+        string $redirectUri
+    ): ?array {
+        try {
+            // 1. Self-signed JWT
+            $jwt = $this->generateSelfSignedJwt();
+
+            // 2. POST na /token s grant_type=authorization_code
+            $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
+                'headers' => [
+                    'Accept'       => 'application/json',
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'api-version'  => '1.2',
+                    'Authorization'=> 'Bearer ' . $jwt, // self-signed JWT
+                ],
+                'form_params' => [
+                    'grant_type'   => 'authorization_code',
+                    'redirect_uri' => $redirectUri,
+                    'client_id'    => ConfigApp::$appId,
+                    'code'         => $authCode,
+                ],
+            ]);
+
+            $body = (string) $response->getBody();
+
+            return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        } catch (RequestException $e) {
+            if ($e->hasResponse()) {
+                $errorBody = (string)$e->getResponse()->getBody();
+                $this->context->getLog()->error(sprintf(
+                    'MerchantToken exchange error (HTTP %s): %s',
+                    $e->getResponse()->getStatusCode(),
+                    $errorBody
+                ));
+            } else {
+                $this->context->getLog()->error('MerchantToken exchange error: ' . $e->getMessage());
+            }
+        } catch (\Throwable $e) {
+            $this->context->getLog()->error('MerchantToken unexpected error: ' . $e->getMessage());
+        }
+
+        return null;
+    }
+
+
+
+    public function _exchangeAuthCodeForMerchantToken(string $authCode, string $redirectUri, ?string $appAccessToken = null)
     {
         // 1. Load private key
         $basePath = dirname(__DIR__, 2);

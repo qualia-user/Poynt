@@ -669,12 +669,12 @@ class WebhookService
             }
 
             $hookIds = array_keys($hooksById);
+
+            $additionalLog = ($businessId != ConfigApp::$orgId) ? ['businessId' => $businessId, 'hookIds' => $hookIds] : [];
+
             $this->context->getLog()->info(
                 'WebhookService::fetchByBusinessId hook ids',
-                [
-                    'businessId' => $businessId,
-                    'hookIds' => $hookIds,
-                ]
+                $additionalLog
             );
 
             $hooks = array_values($hooksById);
