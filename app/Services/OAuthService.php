@@ -285,12 +285,33 @@ class OAuthService {
     private function resolveAuthorizationCodeToken(?string $appAccessToken): string
     {
         if ($appAccessToken !== null) {
-            return $appAccessToken;
+            if ($this->tokenHasAppIssuer($appAccessToken)) {
+                return $appAccessToken;
+            }
+
+            $this->context->getLog()->warning('App access token has non-application issuer; falling back to self-signed JWT.');
         }
 
-        $this->context->getLog()->info('App access token missing; using self-signed JWT for authorization_code grant.');
+        $this->context->getLog()->info('Using self-signed JWT for authorization_code grant.');
 
         return $this->generateSelfSignedJwt();
+    }
+
+    private function tokenHasAppIssuer(string $token): bool
+    {
+        $segments = explode('.', $token);
+
+        if (count($segments) < 2) {
+            return false;
+        }
+
+        $payload = json_decode(base64_decode(strtr($segments[1], '-_', '+/')), true);
+
+        if (!is_array($payload) || !array_key_exists('iss', $payload)) {
+            return false;
+        }
+
+        return $payload['iss'] === 'urn:aid:' . ConfigApp::$appId;
     }
 
 }
