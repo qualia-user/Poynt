@@ -179,6 +179,130 @@ class OAuthService {
 
     public function _exchangeAuthCodeForMerchantToken(string $authCode, string $redirectUri, ?string $appAccessToken = null)
     {
+        $this->logPoyntToFile('Starting merchant token exchange', [
+            'redirectUri'      => $redirectUri,
+            'authCode_preview' => substr($authCode, 0, 8) . '***', // sigurnosni preview
+        ]);
+
+        // 1. Load private key
+        $basePath       = dirname(__DIR__, 2);
+        $privateKeyPath = $basePath . DIRECTORY_SEPARATOR . 'private-key.pem';
+
+        if (!file_exists($privateKeyPath)) {
+            $this->logPoyntToFile('Private key file not found', [
+                'privateKeyPath' => $privateKeyPath,
+            ]);
+            exit;
+        }
+
+        $privateKey = file_get_contents($privateKeyPath);
+        if ($privateKey === false) {
+            $this->logPoyntToFile('Failed to read private key file', [
+                'privateKeyPath' => $privateKeyPath,
+            ]);
+            exit;
+        }
+
+        $this->logPoyntToFile('Private key successfully loaded');
+
+        // 2. Generate self-signed JWT
+        $now    = time();
+        $appUrn = 'urn:aid:' . ConfigApp::$appId;
+
+        $jwtPayload = [
+            'exp' => $now + self::JWT_EXPIRATION_TIME,
+            'iat' => $now,
+            'iss' => $appUrn,
+            'sub' => $appUrn,
+            'aud' => self::POYNT_AUDIENCE,
+            'jti' => Uuid::uuid4()->toString(),
+        ];
+
+        $this->logPoyntToFile('JWT payload for merchant token', [
+            'jwtPayload' => $jwtPayload,
+        ]);
+
+        // Sign the JWT with your private key (e.g. RS256)
+        $jwt = JWT::encode($jwtPayload, $privateKey, self::JWT_SIGNING_ALGORITHM);
+
+        $this->logPoyntToFile('Signed JWT generated', [
+            'jwt_preview' => substr($jwt, 0, 25) . '...',
+            'jwt_length'  => strlen($jwt),
+        ]);
+
+        // 3. Send POST request to exchange code for Merchant Access Token
+        try {
+            $this->logPoyntToFile('Sending merchant token request', [
+                'token_endpoint' => self::POYNT_ENDPOINT_TOKEN,
+                'headers'        => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'api-version'  => '1.2',
+                    'Authorization'=> 'Bearer ***', // ne logiramo stvarni token
+                ],
+                'form_params'    => [
+                    'grant_type'   => 'authorization_code',
+                    'redirect_uri' => $redirectUri,
+                    'client_id'    => $appUrn,
+                    'code_preview' => substr($authCode, 0, 8) . '***',
+                ],
+            ]);
+
+            $response = $this->httpClient->post(self::POYNT_ENDPOINT_TOKEN, [
+                'headers' => [
+                    'Content-Type'  => 'application/x-www-form-urlencoded',
+                    'api-version'   => '1.2',
+                    'Authorization' => 'Bearer ' . $jwt,
+                ],
+                'form_params' => [
+                    'grant_type'   => 'authorization_code',
+                    'redirect_uri' => $redirectUri,
+                    'client_id'    => $appUrn,
+                    'code'         => $authCode,
+                ],
+            ]);
+
+            $statusCode = $response->getStatusCode();
+            $bodyRaw    = (string) $response->getBody();
+
+            $this->logPoyntToFile('Merchant token response received', [
+                'status'  => $statusCode,
+                'bodyRaw' => $bodyRaw,
+            ]);
+
+            // 4. Parse JSON response
+            $responseData = json_decode($bodyRaw, true);
+
+            $this->logPoyntToFile('Merchant token response decoded', [
+                'responseData' => $responseData,
+            ]);
+
+            return $responseData;
+
+        } catch (RequestException $e) {
+            if ($e->hasResponse()) {
+                $response     = $e->getResponse();
+                $statusCode   = $response->getStatusCode();
+                $reasonPhrase = $response->getReasonPhrase();
+                $errorBody    = $response->getBody()->getContents();
+
+                $this->logPoyntToFile('Merchant token exchange failed with HTTP error', [
+                    'status'  => $statusCode,
+                    'reason'  => $reasonPhrase,
+                    'body'    => $errorBody,
+                ]);
+            } else {
+                $this->logPoyntToFile('Merchant token exchange failed with network/other error', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $this->logPoyntToFile('Merchant token exchange finished with NULL result');
+        return null;
+    }
+
+    public function _exchangeAuthCodeForMerchantToken(string $authCode, string $redirectUri)
+    {
         // 1. Load private key
         $basePath = dirname(__DIR__, 2);
         $privateKeyPath = $basePath . DIRECTORY_SEPARATOR . 'private-key.pem';
@@ -225,7 +349,7 @@ class OAuthService {
                 'form_params' => [
                     'grant_type'   => 'authorization_code',
                     'redirect_uri' => $redirectUri,
-                    'client_id'    => ConfigApp::$appId,
+                    'client_id'    => $appUrn,
                     'code'         => $authCode,
                 ],
             ]);
@@ -244,6 +368,40 @@ class OAuthService {
         }
 
         return null;
+    }
+
+    private function logPoyntToFile(string $message, array $context = []): void
+    {
+        // 1) Izračun base patha
+        $basePath = dirname(__DIR__, 2); // prilagodi ako ti je projekt drugdje
+
+        // 2) Folder za logove
+        $logDir = $basePath . DIRECTORY_SEPARATOR . 'logs';
+        if (!is_dir($logDir)) {
+            // pokušaj kreirati
+            if (!mkdir($logDir, 0775, true) && !is_dir($logDir)) {
+                // Ako ovo ne uspije, logiraj barem u PHP error log
+                error_log('[Poynt] Failed to create log directory: ' . $logDir);
+                return;
+            }
+        }
+
+        $logFile = $logDir . DIRECTORY_SEPARATOR . 'poynt-merchant-token.log';
+
+        $entry = [
+            'time'    => date('c'),
+            'message' => $message,
+            'context' => $context,
+        ];
+
+        $line = json_encode($entry, JSON_UNESCAPED_SLASHES) . PHP_EOL;
+
+        $result = file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
+
+        if ($result === false) {
+            // Ako ne može pisati u file, barem ćeš vidjeti ovo u error logu
+            error_log('[Poynt] Failed to write to log file: ' . $logFile);
+        }
     }
 
     /**
